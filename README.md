@@ -24,10 +24,11 @@ Runs entirely in the browser — no server backend required. Uses a local LLM (v
 ## Prerequisites
 
 - **Chrome** with [Allow CORS](https://chromewebstore.google.com/detail/allow-cors-access-control/lhobafahddgcelffkeicbaginigeejlf) extension enabled
-  - CORS settings: enable Credentials (option 4), set Origin mode to ORIGIN (option 5)
+  - CORS settings: set Origin mode to ORIGIN (option 5)
 - **LM Studio** at `127.0.0.1:1234` (configurable) with a model loaded (8B+ recommended, e.g. Qwen 3.5-9B)
   - Developer tab → Server settings → Enable CORS
   - Not needed for Mouser API method
+  - For DuckDuckGo search: the model must support tool/function calling, and the [visit-website tool](https://lmstudio.ai/docs/features/tool-use) must be enabled in LM Studio
 - Visit the distributor site once before searching (establishes cookies for Web Search method)
 
 ## How It Works
