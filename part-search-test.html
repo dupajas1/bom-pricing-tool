@@ -1,0 +1,1422 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Part Search Test — Local LLM</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f8f7f4; color: #1a1a1a; padding: 2rem; max-width: 760px; margin: 0 auto; line-height: 1.6; }
+  h1 { font-size: 22px; font-weight: 500; margin-bottom: 4px; }
+  .subtitle { font-size: 13px; color: #6b6a66; margin-bottom: 1.5rem; }
+  .section { margin-bottom: 16px; }
+  .section-title { font-size: 14px; font-weight: 500; margin-bottom: 8px; }
+  label.fl { font-size: 11px; color: #9a9990; display: block; margin-bottom: 3px; }
+  input { padding: 8px 10px; font-size: 13px; border: 1px solid #d3d1c7; border-radius: 6px; background: #fff; color: #1a1a1a; outline: none; }
+  input:focus { border-color: #378add; }
+  .row { display: flex; gap: 8px; }
+  .col { display: flex; flex-direction: column; gap: 3px; }
+  .col.grow { flex: 1; }
+  button { padding: 8px 20px; font-size: 14px; border: 1px solid #b4b2a9; border-radius: 6px; background: #fff; color: #1a1a1a; cursor: pointer; transition: all 0.15s; }
+  button:hover { background: #f1efe8; }
+  button:active { transform: scale(0.98); }
+  button:disabled { opacity: 0.4; cursor: default; }
+  button.primary { background: #185fa5; color: #fff; border-color: #185fa5; }
+  button.primary:hover { background: #0c447c; }
+  .status-box { padding: 10px 14px; border-radius: 8px; font-size: 13px; margin-bottom: 14px; }
+  .status-box.info { background: #e6f1fb; color: #0c447c; }
+  .status-box.error { background: #fcebeb; color: #791f1f; }
+  .status-box.warn { background: #faeeda; color: #633806; }
+  .result-card { padding: 1.25rem; border-radius: 12px; margin-bottom: 18px; }
+  .result-card.found { background: #eaf3de; }
+  .result-card.not-found { background: #fcebeb; }
+  .result-price { font-size: 36px; font-weight: 500; margin: 4px 0 10px; }
+  .found .result-price { color: #27500a; }
+  .not-found .result-price { color: #791f1f; }
+  .result-meta { font-size: 12px; line-height: 1.8; }
+  .found .result-meta { color: #3b6d11; }
+  .not-found .result-meta { color: #791f1f; }
+  .result-meta a { color: inherit; }
+  .steps-bar { display: flex; gap: 4px; align-items: center; margin-bottom: 14px; flex-wrap: wrap; }
+  .step { display: flex; align-items: center; gap: 4px; font-size: 11px; color: #b4b2a9; }
+  .step.active { color: #185fa5; font-weight: 500; }
+  .step.done { color: #3b6d11; font-weight: 500; }
+  .step-dot { width: 7px; height: 7px; border-radius: 50%; background: #d3d1c7; flex-shrink: 0; }
+  .step.active .step-dot { background: #185fa5; }
+  .step.done .step-dot { background: #639922; }
+  .step-arrow { color: #d3d1c7; font-size: 9px; }
+  .config-bar { padding: 10px 14px; border-radius: 8px; background: #f1efe8; font-size: 12px; color: #6b6a66; margin-bottom: 16px; display: flex; justify-content: space-between; align-items: center; }
+  details { margin-bottom: 10px; }
+  summary { font-size: 13px; font-weight: 500; color: #6b6a66; cursor: pointer; margin-bottom: 4px; }
+  .log-box { padding: 10px 12px; border-radius: 8px; background: #f1efe8; font-size: 11px; font-family: "SF Mono", "Fira Code", "Consolas", monospace; color: #6b6a66; line-height: 1.5; white-space: pre-wrap; max-height: 280px; overflow-y: auto; word-break: break-all; }
+  .timer { font-size: 12px; color: #9a9990; margin-left: 8px; }
+  .instructions { padding: 1rem 1.25rem; border-radius: 12px; background: #f1efe8; font-size: 13px; color: #6b6a66; line-height: 1.7; }
+  .instructions strong { color: #1a1a1a; font-weight: 500; }
+  code { font-size: 12px; padding: 2px 6px; background: #e0dfd8; border-radius: 3px; font-family: "SF Mono", "Fira Code", "Consolas", monospace; }
+</style>
+</head>
+<body>
+
+<h1>Part search test — local LLM</h1>
+<p class="subtitle">Search distributor sites for component pricing. Supports web scraping, APIs, and DuckDuckGo search.</p>
+
+<div class="config-bar" id="llm-bar">
+  <span>LM Studio: <strong>127.0.0.1:1234</strong></span>
+  <span id="llm-status">Checking...</span>
+</div>
+
+<!-- Website config -->
+<div class="section">
+  <div class="section-title">Website</div>
+  <div class="row" style="margin-bottom:8px;">
+    <div class="col">
+      <label class="fl">Search method</label>
+      <select id="search-method" onchange="toggleSearchMethod()" style="padding:7px 10px; font-size:13px; border:1px solid #d3d1c7; border-radius:6px; background:#fff;">
+        <option value="web">Web search (fetch + LLM)</option>
+        <option value="mouser-api">Mouser API</option>
+        <option value="ddg-agent">DuckDuckGo (LLM agent)</option>
+      </select>
+    </div>
+  </div>
+  <!-- Web search config -->
+  <div id="web-config" class="row">
+    <div class="col">
+      <label class="fl">Distributor</label>
+      <select id="site-select" onchange="onSiteSelect()" style="padding:7px 10px; font-size:13px; border:1px solid #d3d1c7; border-radius:6px; background:#fff;">
+        <option value="Octopart|https://octopart.com/search?q=">Octopart</option>
+        <option value="DigiKey|https://www.digikey.com/en/products/result?keywords=">DigiKey</option>
+        <option value="Future Electronics|https://www.futureelectronics.com/search?text=">Future Electronics</option>
+        <option value="custom">Custom...</option>
+      </select>
+    </div>
+    <div class="col grow">
+      <label class="fl">Search URL (MPN appended to end)</label>
+      <input id="site-url" value="https://octopart.com/search?q=" style="width:100%;">
+    </div>
+    <input type="hidden" id="site-name" value="Octopart">
+  </div>
+  <!-- Mouser API config -->
+  <div id="mouser-api-config" class="row" style="display:none;">
+    <div class="col grow">
+      <label class="fl">Mouser Search API key (<a href="https://www.mouser.com/api-hub/" target="_blank" style="color:#185fa5;">get one free</a>)</label>
+      <input id="mouser-api-key" placeholder="Paste your Mouser Search API key" style="width:100%;">
+    </div>
+  </div>
+  <!-- DDG agent config -->
+  <div id="ddg-config" style="display:none; font-size:12px; color:#6b6a66; padding:4px 0;">
+    Browser searches DuckDuckGo and identifies up to 15 product pages. For each page, LLM is given the visit_website tool — it requests the page, browser fetches and cleans it, then LLM extracts pricing data. Visits all candidates and compares results.
+  </div>
+</div>
+
+<!-- Part input -->
+<div class="section">
+  <div class="section-title">Part to search</div>
+  <div class="row">
+    <div class="col">
+      <label class="fl">Manufacturer (optional)</label>
+      <input id="mfg" placeholder="e.g. Texas Instruments" style="width:180px;">
+    </div>
+    <div class="col grow">
+      <label class="fl">Part number (exact) *</label>
+      <input id="pn" placeholder="e.g. LM317T">
+    </div>
+    <div class="col">
+      <label class="fl">Qty</label>
+      <input id="qty" type="number" min="1" value="1" style="width:70px;">
+    </div>
+  </div>
+</div>
+
+<!-- Controls -->
+<div class="section" style="display:flex; align-items:center; gap:10px;">
+  <button class="primary" id="btn-search" onclick="doSearch()">Search</button>
+  <button id="btn-reset" onclick="doReset()" style="display:none;">Reset</button>
+  <span id="timer" class="timer"></span>
+</div>
+
+<!-- Step indicators -->
+<div class="steps-bar" id="steps-bar" style="display:none;">
+  <div class="step" id="step1"><span class="step-dot"></span> Search page</div>
+  <span class="step-arrow">→</span>
+  <div class="step" id="step2"><span class="step-dot"></span> Find candidates</div>
+  <span class="step-arrow">→</span>
+  <div class="step" id="step3"><span class="step-dot"></span> Verify &amp; extract</div>
+</div>
+
+<div id="status"></div>
+<div id="result" style="display:none;"></div>
+
+<!-- Debug logs -->
+<div id="logs" style="display:none;">
+  <details>
+    <summary>Step 1: Search page HTML (cleaned)</summary>
+    <div class="log-box" id="log-search-html"></div>
+  </details>
+  <details>
+    <summary>Step 2: LLM candidate URLs</summary>
+    <div class="log-box" id="log-candidates"></div>
+  </details>
+  <details>
+    <summary>Step 3: Product page verification</summary>
+    <div class="log-box" id="log-verify"></div>
+  </details>
+</div>
+
+<!-- Instructions -->
+<div id="instructions" class="instructions">
+  <strong>How this works</strong><br>
+  <em>Web search:</em> Browser fetches distributor pages, LLM analyzes them to find and verify product data.<br>
+  <em>Mouser API:</em> Direct API call — returns structured JSON, no LLM needed. Get a free key at <a href="https://www.mouser.com/api-hub/" target="_blank">mouser.com/api-hub</a>.<br><br>
+  <strong>Prerequisites</strong><br>
+  • Chrome with <a href="https://chromewebstore.google.com/detail/allow-cors-access-control/lhobafahddgcelffkeicbaginigeejlf" target="_blank">Allow CORS</a> extension enabled<br>
+  • Visit the distributor site once (establishes cookies) — for Web search method<br>
+  • LM Studio running at 127.0.0.1:1234 with a model loaded (8B+ recommended)<br>
+  • In LM Studio: Developer tab → Server settings → Enable CORS (required for browser requests)<br>
+  • For DuckDuckGo search: LM Studio model must support tool/function calling (e.g. Qwen 2.5+, Llama 3.1+). CORS extension required for page fetching.<br><br>
+  <strong>Strict matching</strong><br>
+  The MPN on the product page must exactly match what you searched — character for character.
+  Manufacturer must match if specified (abbreviations OK).
+  "Not found" is valuable — it flags BOM errors or discontinued parts.
+</div>
+
+<script>
+
+const LLM_URL = "http://127.0.0.1:1234/v1/chat/completions";
+const MOUSER_API_URL = "https://api.mouser.com/api/v1/search/partnumber";
+const MAX_CANDIDATES = 5;   // max product pages to try
+let timerInterval = null;
+let startTime = 0;
+
+function $(id) { return document.getElementById(id); }
+
+function toggleSearchMethod() {
+  const method = $('search-method').value;
+  $('web-config').style.display = method === 'web' ? 'flex' : 'none';
+  $('mouser-api-config').style.display = method === 'mouser-api' ? 'flex' : 'none';
+  $('ddg-config').style.display = method === 'ddg-agent' ? 'block' : 'none';
+  // LLM status bar: hide for API-only methods
+  $('llm-bar').style.display = method === 'mouser-api' ? 'none' : 'flex';
+  checkLLM();
+  try { localStorage.setItem('pst-search-method', method); } catch(e) {}
+}
+
+function onSiteSelect() {
+  const val = $('site-select').value;
+  if (val === 'custom') {
+    $('site-url').value = '';
+    $('site-name').value = 'Custom';
+    $('site-url').focus();
+    return;
+  }
+  const [name, url] = val.split('|');
+  $('site-name').value = name;
+  $('site-url').value = url;
+}
+
+// Auto-detect site name when URL is manually edited
+$('site-url').addEventListener('input', function() {
+  const url = this.value.toLowerCase();
+  const known = { 'digikey': 'DigiKey', 'octopart': 'Octopart', 'newark': 'Newark',
+    'futureelectronics': 'Future Electronics', 'avnet': 'Avnet', 'mouser': 'Mouser',
+    'arrow': 'Arrow', 'farnell': 'Farnell', 'lcsc': 'LCSC', 'element14': 'element14' };
+  for (const [domain, name] of Object.entries(known)) {
+    if (url.includes(domain)) { $('site-name').value = name; return; }
+  }
+  $('site-name').value = 'Custom';
+});
+
+// Restore saved settings
+try {
+  const savedMethod = localStorage.getItem('pst-search-method');
+  if (savedMethod) { $('search-method').value = savedMethod; toggleSearchMethod(); }
+  const savedKey = localStorage.getItem('pst-mouser-api-key');
+  if (savedKey) $('mouser-api-key').value = savedKey;
+} catch(e) {}
+
+// Auto-save API key on change
+document.addEventListener('DOMContentLoaded', function() {
+  const keyInput = $('mouser-api-key');
+  if (keyInput) keyInput.addEventListener('change', function() {
+    try { localStorage.setItem('pst-mouser-api-key', this.value); } catch(e) {}
+  });
+});
+
+function startTimer() {
+  startTime = Date.now();
+  timerInterval = setInterval(() => {
+    $('timer').textContent = Math.round((Date.now() - startTime) / 1000) + 's';
+  }, 1000);
+}
+function stopTimer() {
+  clearInterval(timerInterval);
+  $('timer').textContent = Math.round((Date.now() - startTime) / 1000) + 's';
+}
+
+function setStep(n) {
+  ['step1','step2','step3'].forEach((id, i) => {
+    $(id).className = 'step' + (i < n - 1 ? ' done' : i === n - 1 ? ' active' : '');
+  });
+}
+
+function showStatus(msg, type) {
+  $('status').innerHTML = '<div class="status-box ' + type + '">' + msg + '</div>';
+}
+function clearStatus() { $('status').innerHTML = ''; }
+function escapeHtml(t) { const d = document.createElement('div'); d.textContent = t; return d.innerHTML; }
+function logAppend(id, text) { $(id).textContent += text + '\n'; }
+
+// ── HTML cleaning ───────────────────────────────────
+// mode: 'search' keeps <a href> tags for URL extraction
+//       'product' strips all tags + junk sections for minimal text
+
+function cleanHtml(raw, mode) {
+  let h = raw;
+  // 1. Try to extract <main> content — strips menus, headers, footers (universal, most modern sites)
+  const mainMatch = h.match(/<main[\s\S]*?<\/main>/i);
+  if (mainMatch) {
+    h = mainMatch[0];
+  } else {
+    // Fallback: strip known junk elements
+    h = h.replace(/<nav[\s\S]*?<\/nav>/gi, '');
+    h = h.replace(/<header[\s\S]*?<\/header>/gi, '');
+    h = h.replace(/<footer[\s\S]*?<\/footer>/gi, '');
+    h = h.replace(/<aside[\s\S]*?<\/aside>/gi, '');
+  }
+  // 2. Strip non-content elements
+  h = h.replace(/<script[\s\S]*?<\/script>/gi, '');
+  h = h.replace(/<style[\s\S]*?<\/style>/gi, '');
+  h = h.replace(/<svg[\s\S]*?<\/svg>/gi, '');
+  h = h.replace(/<noscript[\s\S]*?<\/noscript>/gi, '');
+  h = h.replace(/<img[^>]*>/gi, '');
+  h = h.replace(/<link[^>]*>/gi, '');
+  h = h.replace(/<meta[^>]*>/gi, '');
+  h = h.replace(/<iframe[\s\S]*?<\/iframe>/gi, '');
+  // Strip form/select TAGS but keep content (Mouser wraps search results in <form>)
+  h = h.replace(/<\/?form[^>]*>/gi, '');
+  // 2b. Strip interactive elements (inputs, checkboxes — no product data)
+  // Strip button TAGS but keep content (Octopart wraps column headers like "Stock" in sort buttons)
+  h = h.replace(/<\/?button[^>]*>/gi, '');
+  h = h.replace(/<input[^>]*>/gi, '');
+  h = h.replace(/<select[\s\S]*?<\/select>/gi, '');
+  h = h.replace(/<textarea[\s\S]*?<\/textarea>/gi, '');
+  // 3. Strip attributes that add bulk without content
+  h = h.replace(/<[^>]*aria-hidden="true"[^>]*>[\s\S]*?<\/[^>]+>/gi, '');
+  h = h.replace(/<!--[\s\S]*?-->/g, '');
+  h = h.replace(/\s+data-[a-z-]+="[^"]*"/gi, '');
+  h = h.replace(/\s+style="[^"]*"/gi, '');
+  h = h.replace(/\s+class="[^"]*"/gi, '');
+  h = h.replace(/\s+tabindex="[^"]*"/gi, '');
+  h = h.replace(/\s+cookie-[a-z-]+="[^"]*"/gi, '');
+  h = h.replace(/\s+track-[a-z-]+="[^"]*"/gi, '');
+  h = h.replace(/\s+ref_page_event="[^"]*"/gi, '');
+  h = h.replace(/\s+aria-[a-z-]+="[^"]*"/gi, '');
+  h = h.replace(/\s+role="[^"]*"/gi, '');
+  h = h.replace(/\s+id="[^"]*"/gi, '');
+  h = h.replace(/\s+on[a-z]+="[^"]*"/gi, '');          // onclick, onload, etc.
+  h = h.replace(/\s+headers="[^"]*"/gi, '');            // table header refs
+  h = h.replace(/\s+(width|height|border|cellpadding|cellspacing|colspan|rowspan|scope|valign|align|loading|alt|title|name|method|action|type|value|maxlength|placeholder|autocomplete|for)="[^"]*"/gi, '');
+  // Strip long tracking/affiliate URLs (>150 chars) — but keep PDF/datasheet links
+  h = h.replace(/\s+href="(https?:\/\/[^"]{150,})"/gi, function(match, url) {
+    if (/\.pdf|datasheet/i.test(url)) return match;
+    return '';
+  });
+  h = h.replace(/\s+rel="[^"]*"/gi, '');
+  h = h.replace(/\s+target="[^"]*"/gi, '');
+
+  // 3b. Convert HTML tables to pipe-delimited text BEFORE collapsing empty tags
+  if (mode === 'product') {
+    h = h.replace(/<table[^>]*>([\s\S]*?)<\/table>/gi, function(tableMatch, tableContent) {
+      const rows = [];
+      const rowMatches = tableContent.match(/<tr[^>]*>[\s\S]*?<\/tr>/gi) || [];
+      for (const rowHtml of rowMatches) {
+        const cells = [];
+        const cellMatches = rowHtml.match(/<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi) || [];
+        for (const cellHtml of cellMatches) {
+          const inner = cellHtml.replace(/<t[dh][^>]*>/i, '').replace(/<\/t[dh]>/i, '');
+          let text = inner.replace(/<[^>]+>/g, ' ').replace(/&[a-z]+;|&#\d+;/g, ' ').replace(/\s+/g, ' ').trim();
+          cells.push(text || '—');
+        }
+        if (cells.some(c => c !== '—')) rows.push(cells.join(' | '));
+      }
+      return '\n' + rows.join('\n') + '\n';
+    });
+  }
+
+  // 4. Collapse whitespace and empty tags
+  h = h.replace(/\s+/g, ' ');
+  for (let i = 0; i < 4; i++) {
+    h = h.replace(/<(div|span|p|ul|li|section|object|fieldset|label|td|tr|th|thead|tbody|table|strong|em|i|sup|b|ol|nav|a|h[1-6])\s*>\s*<\/\1>/gi, '');
+  }
+
+  // 5. Product page mode: extra optimization
+  if (mode === 'product') {
+    // Cut at "related products" / "you may also" junk sections
+    const junkMarkers = ['You May Also Like', 'You May Also', 'Customers Also Viewed',
+      'Customers Also Bought', 'People Also Bought', 'Recently Viewed',
+      'Related Products', 'Associated Products', 'Shipping Instructions',
+      'Newsletter Sign Up', 'Cookie Policy'];
+    const hLower = h.toLowerCase();
+    for (const marker of junkMarkers) {
+      const idx = hLower.indexOf(marker.toLowerCase());
+      if (idx >= 0 && idx > h.length * 0.4) { h = h.substring(0, idx); break; }
+    }
+    // Preserve PDF/datasheet URLs before stripping tags
+    h = h.replace(/<a[^>]+href="(https?:\/\/[^"]*\.pdf[^"]*)"[^>]*>([\s\S]*?)<\/a>/gi, '$2 [$1]');
+    h = h.replace(/<a[^>]+href="(https?:\/\/[^"]*datasheet[^"]*)"[^>]*>([\s\S]*?)<\/a>/gi, '$2 [$1]');
+    // Strip all remaining HTML tags
+    h = h.replace(/<[^>]+>/g, ' ');
+    h = h.replace(/&[a-z]+;/g, ' ');
+    h = h.replace(/&#\d+;/g, ' ');
+    h = h.replace(/\s+/g, ' ').trim();
+  }
+
+  // 6. Truncate for context window safety
+  if (h.length > 60000) h = h.substring(0, 60000) + '\n[TRUNCATED]';
+  return h;
+}
+
+// ── Fetch a page ────────────────────────────────────
+
+async function fetchPage(url) {
+  let resp;
+  // Try with credentials (sends cookies cross-origin — needed for most sites)
+  try {
+    resp = await fetch(url, { credentials: 'include' });
+    if (resp.ok) {
+      const html = await resp.text();
+      return { html, finalUrl: resp.url || url };
+    }
+  } catch (e) { /* fall through */ }
+  // Fallback: no credentials
+  resp = await fetch(url);
+  if (!resp.ok) throw new Error('HTTP ' + resp.status + ' ' + resp.statusText);
+  const html = await resp.text();
+  return { html, finalUrl: resp.url || url };
+}
+
+// ── Call LM Studio ──────────────────────────────────
+
+async function callLLM(systemPrompt, userPrompt) {
+  const resp = await fetch(LLM_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model: 'local-model',
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt },
+      ],
+      max_tokens: 32000,
+      temperature: 0,
+    }),
+  });
+  const data = await resp.json();
+  if (data.error) throw new Error(typeof data.error === 'string' ? data.error : JSON.stringify(data.error));
+  const text = (data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content) || '';
+  return { text, raw: data };
+}
+
+// ── Extract JSON from LLM response (strip thinking) ─
+
+function extractJSON(text) {
+  // Strip <think>/<thinking> tags
+  let t = text.replace(/<think>[\s\S]*?<\/think>/gi, '').replace(/<thinking>[\s\S]*?<\/thinking>/gi, '').trim();
+  // Strip markdown fences
+  t = t.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
+  // Find first { or [
+  const objStart = t.indexOf('{');
+  const arrStart = t.indexOf('[');
+  let start = -1;
+  let openChar = '{', closeChar = '}';
+  if (arrStart >= 0 && (objStart < 0 || arrStart < objStart)) {
+    start = arrStart; openChar = '['; closeChar = ']';
+  } else if (objStart >= 0) {
+    start = objStart;
+  }
+  if (start < 0) return null;
+  t = t.substring(start);
+  // Brace/bracket-match
+  let depth = 0;
+  for (let i = 0; i < t.length; i++) {
+    if (t[i] === openChar) depth++;
+    else if (t[i] === closeChar) { depth--; if (depth === 0) { try { return JSON.parse(t.substring(0, i + 1)); } catch(e) { return null; } } }
+  }
+  return null;
+}
+
+// ── Resolve relative URL ────────────────────────────
+
+function resolveUrl(relative, baseUrl) {
+  if (relative.startsWith('http')) return relative;
+  try {
+    const base = new URL(baseUrl);
+    if (relative.startsWith('/')) return base.origin + relative;
+    return base.origin + '/' + relative;
+  } catch (e) { return relative; }
+}
+
+// ── Health check ────────────────────────────────────
+
+async function checkLLM() {
+  // Skip check if using API-only method
+  if ($('search-method').value === 'mouser-api') {
+    $('llm-status').textContent = 'Not needed for API search';
+    $('llm-status').style.color = '#6b6a66';
+    return;
+  }
+  try {
+    const resp = await fetch(LLM_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: 'local-model', messages: [{ role: 'user', content: 'Reply: OK' }], max_tokens: 5, temperature: 0 }),
+    });
+    $('llm-status').textContent = resp.ok ? 'Connected' : 'Error — load a model';
+    $('llm-status').style.color = resp.ok ? '#27500a' : '#a32d2d';
+  } catch (e) {
+    $('llm-status').textContent = 'Not reachable — is LM Studio running?';
+    $('llm-status').style.color = '#a32d2d';
+  }
+}
+checkLLM();
+
+// ═════════════════════════════════════════════════════
+// VERIFY PRODUCT PAGE — reusable for both direct-landing and candidate flow
+// ═════════════════════════════════════════════════════
+
+async function verifyProductPage(productHtml, pageUrl, pn, mfg, hasMfg, qty, siteName) {
+  const mfgVerify = hasMfg
+    ? `The manufacturer should match "${mfg}" (abbreviations OK: "TI"="Texas Instruments", "ST"="STMicroelectronics", "ON"="onsemi"/"ON Semiconductor", "Bourns"="Bourns Inc." etc). Use reasonable flexibility for name variations. If manufacturer is clearly a different company, set found: false.`
+    : 'No manufacturer filter. Accept any manufacturer but report who makes it.';
+
+  const verifyPrompt = `You are analyzing a product detail page from ${siteName}.
+
+TASK 1 — VERIFY MPN:
+Find the Manufacturer Part Number on this page. It must EXACTLY match "${pn}" — character for character. Look for fields labeled "Manufacturer Part Number", "MPN", "Mfr Part #", "Manufacturer Product Number", or similar. If the MPN is "${pn}/NOPB" or any variant, it is NOT a match.
+
+TASK 2 — VERIFY MANUFACTURER:
+${mfgVerify}
+
+TASK 3 — MINIMUM ACCEPTANCE:
+A page is a MATCH if the MPN matches exactly AND the manufacturer is correct (or not specified). Missing fields like status, datasheet, or lead time do NOT disqualify a match. As long as MPN + manufacturer + at least some pricing exist, report found: true.
+
+TASK 4 — EXTRACT PRICING (handle multi-distributor pages):
+Some pages (like Octopart, FindChips) show MULTIPLE distributors for the same part. Each distributor has its own stock, min qty, and price breaks.
+
+IMPORTANT — "Min" or "Minimum Order Quantity" is the DISTRIBUTOR'S minimum purchase requirement (the smallest quantity they will sell). This is NOT the quantity you need — it is a constraint from the seller. For example, Min=1 means you can buy any quantity, Min=10 means you must buy at least 10, Min=4000 means you must buy at least 4000 (a full reel/box). Do NOT confuse this with the requested build quantity of ${qty}.
+
+PRIORITIZATION RULES (in order):
+1. FIRST: prefer distributors with stock > 0 (actual number shown, not just "in stock")
+2. AMONG those with stock: prefer distributors whose min_qty <= ${qty} (you can actually buy the needed amount without overbuying)
+3. AMONG qualifying distributors: prefer lowest price at qty ${qty}
+4. If NO distributor has min_qty <= ${qty}, pick the one with the lowest min_qty (least overbuy)
+5. NEVER pick a distributor with 0 stock if another has stock available
+
+Also check for packaging options (Cut Tape, Full Reel, Tube, Tray, Bulk, Digi-Reel, etc.) if shown.
+
+For the BEST distributor/option, extract:
+- packaging: name (e.g. "Cut Tape", "Full Reel", "Tube") or "Standard" if not specified
+- min_qty: the DISTRIBUTOR'S minimum order quantity (from the "Min" column — NOT the requested qty). If not shown, use 1.
+- price_breaks: array of {qty, unit_price} for each tier shown
+
+TASK 5 — RECOMMEND BEST OPTION:
+For a build quantity of ${qty} units, determine which option gives the lowest TOTAL COST.
+- Cut Tape/individual: you can order exactly ${qty} units. Use the price break tier that covers ${qty}.
+- Full Reel: you must order in multiples (e.g. 5000). If ${qty} < reel qty, you still pay for the full reel.
+- Pick whichever gives the lowest total cost for ${qty} units.
+- Report which distributor was selected in the "source" field.
+
+TASK 6 — OTHER DATA (extract if present, skip if not):
+- min_buy_qty: The DISTRIBUTOR'S minimum order quantity from the "Min" column for the chosen distributor. This is how many pieces you must buy at minimum (e.g. 1, 10, 100, 4000). NOT the requested quantity ${qty}. If not shown, default to 1.
+- stock: In-stock quantity from the CHOSEN distributor (must be a number if shown)
+- status: Active, Obsolete, NRND, EOL, etc.
+- datasheet_url: URL to datasheet PDF
+- lead_time: Manufacturing lead time
+- currency: The currency for all prices (look for "All prices are in USD", "Pricing (USD)", "Currency: $", etc.). Report the 3-letter code: USD, CAD, EUR, GBP, etc.
+- source: Name of the distributor selected (e.g. "Rochester Electronics", "DigiKey")
+
+Your final output MUST be a JSON object.
+
+If MPN matches and manufacturer is correct:
+{
+  "found": true,
+  "mpn_verified": "${pn}",
+  "manufacturer": "name from page",
+  "currency": "USD",
+  "packaging_options": [
+    {
+      "packaging": "Cut Tape",
+      "min_qty": 1,
+      "price_breaks": [{"qty": 1, "unit_price": "$0.10"}, ...]
+    },
+    {
+      "packaging": "Full Reel",
+      "min_qty": 5000,
+      "price_breaks": [{"qty": 5000, "unit_price": "$0.011"}, ...]
+    }
+  ],
+  "best_option": {
+    "packaging": "Cut Tape",
+    "qty_to_order": ${qty},
+    "unit_price": "$X.XX",
+    "total_cost": "$X.XX",
+    "reason": "brief explanation"
+  },
+  "min_buy_qty": 1,
+  "stock": "number or null",
+  "status": "Active or null",
+  "datasheet_url": "URL or null",
+  "lead_time": "time or null",
+  "url": "${pageUrl}",
+  "source": "distributor name or null"
+}
+
+If MPN does NOT match or manufacturer is clearly wrong:
+{"found": false, "reason": "explanation", "actual_mpn": "MPN on page", "actual_manufacturer": "manufacturer on page"}
+
+HTML:
+${productHtml}`;
+
+  try {
+    const { text, raw } = await callLLM(
+      'You verify part numbers and extract pricing data from electronics distributor product pages. You analyze all packaging options and recommend the cheapest. Output a JSON object.',
+      verifyPrompt
+    );
+    logAppend('log-verify', 'LLM tokens: ' + (raw.usage ? raw.usage.total_tokens : '?'));
+
+    const result = extractJSON(text);
+    if (!result) {
+      logAppend('log-verify', 'Could not parse response. Raw:\n' + text.substring(0, 1500));
+      return null;
+    }
+    logAppend('log-verify', 'Result: ' + JSON.stringify(result, null, 2));
+    return result;
+  } catch (e) {
+    logAppend('log-verify', 'LLM ERROR: ' + e.message);
+    return null;
+  }
+}
+
+// ═════════════════════════════════════════════════════
+// MAIN SEARCH FLOW
+// ═════════════════════════════════════════════════════
+
+async function doSearch() {
+  const method = $('search-method').value;
+  if (method === 'mouser-api') return doMouserApiSearch();
+  if (method === 'ddg-agent') return doDdgAgentSearch();
+  return doWebSearch();
+}
+
+// ═════════════════════════════════════════════════════
+// MOUSER API SEARCH
+// ═════════════════════════════════════════════════════
+
+async function doMouserApiSearch() {
+  const pn = $('pn').value.trim();
+  if (!pn) return;
+  const mfg = $('mfg').value.trim();
+  const qty = parseInt($('qty').value) || 1;
+  const hasMfg = mfg.length > 0;
+  const apiKey = $('mouser-api-key').value.trim();
+
+  if (!apiKey) {
+    showStatus('Please enter your Mouser Search API key.', 'error');
+    return;
+  }
+
+  // Reset UI
+  $('result').style.display = 'none';
+  $('instructions').style.display = 'none';
+  $('logs').style.display = 'block';
+  $('steps-bar').style.display = 'flex';
+  $('btn-search').disabled = true;
+  $('btn-reset').style.display = 'inline-block';
+  ['log-search-html','log-candidates','log-verify'].forEach(id => $(id).textContent = '');
+
+  startTimer();
+  setStep(1);
+  showStatus('Searching Mouser API for "' + pn + '"...', 'info');
+
+  try {
+    const resp = await fetch(MOUSER_API_URL + '?apiKey=' + encodeURIComponent(apiKey), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        SearchByPartRequest: {
+          mouserPartNumber: pn,
+          partSearchOptions: 'Exact'
+        }
+      })
+    });
+
+    if (!resp.ok) {
+      stopTimer();
+      showStatus('Mouser API error: HTTP ' + resp.status + '. Check your API key.', 'error');
+      $('btn-search').disabled = false;
+      return;
+    }
+
+    const data = await resp.json();
+    logAppend('log-search-html', 'Mouser API response:\n' + JSON.stringify(data, null, 2).substring(0, 10000));
+
+    const parts = (data.SearchResults && data.SearchResults.Parts) || [];
+    setStep(2);
+    logAppend('log-candidates', 'Found ' + parts.length + ' parts from API');
+
+    if (parts.length === 0) {
+      stopTimer();
+      const errorMsg = (data.Errors && data.Errors.length > 0) ? data.Errors.map(e => e.Message).join('; ') : 'No results returned';
+      showResult({ found: false, reason: 'Mouser API: ' + errorMsg }, pn, qty);
+      clearStatus();
+      return;
+    }
+
+    // Filter for exact MPN match + manufacturer
+    const MFG_ABBREVS = {
+      'ti': 'texas instruments', 'st': 'stmicroelectronics', 'on': 'onsemi',
+      'nxp': 'nxp semiconductors', 'adi': 'analog devices', 'mchp': 'microchip technology',
+    };
+
+    const matches = [];
+    for (const part of parts) {
+      // Exact MPN check
+      if (part.ManufacturerPartNumber !== pn) {
+        logAppend('log-candidates', '  Skip: ' + part.ManufacturerPartNumber + ' (MPN mismatch)');
+        continue;
+      }
+      // Manufacturer check
+      if (hasMfg) {
+        const mfgLower = mfg.toLowerCase();
+        const partMfgLower = (part.Manufacturer || '').toLowerCase();
+        const expanded = MFG_ABBREVS[mfgLower] || mfgLower;
+        if (partMfgLower !== mfgLower && partMfgLower !== expanded &&
+            !partMfgLower.includes(expanded) && !expanded.includes(partMfgLower)) {
+          logAppend('log-candidates', '  Skip: ' + part.ManufacturerPartNumber + ' by ' + part.Manufacturer + ' (mfg mismatch)');
+          continue;
+        }
+      }
+      logAppend('log-candidates', '  Match: ' + part.ManufacturerPartNumber + ' by ' + part.Manufacturer);
+      matches.push(part);
+    }
+
+    if (matches.length === 0) {
+      stopTimer();
+      const available = parts.filter(p => p.ManufacturerPartNumber === pn).map(p => p.Manufacturer).join(', ');
+      showResult({ found: false, reason: hasMfg
+        ? 'MPN "' + pn + '" found but not from "' + mfg + '". Available: ' + (available || 'none')
+        : 'No exact MPN match for "' + pn + '"'
+      }, pn, qty);
+      clearStatus();
+      return;
+    }
+
+    setStep(3);
+
+    // Convert each match to our result format
+    const allResults = [];
+    for (const part of matches) {
+      const priceBreaks = (part.PriceBreaks || []).map(pb => ({
+        qty: parseInt(pb.Quantity) || 0,
+        unit_price: pb.Price || '',
+        ext_price: ''
+      }));
+
+      // Determine packaging from MouserPartNumber or description
+      const packaging = part.Reeling || 'Standard';
+      const minQty = parseInt(part.Min) || 1;
+      const mult = parseInt(part.Mult) || 1;
+
+      // Find best price for requested qty
+      let bestBreak = priceBreaks[0] || { qty: 1, unit_price: 'N/A' };
+      for (const pb of priceBreaks) {
+        if (pb.qty <= qty) bestBreak = pb;
+      }
+      const unitPriceNum = parseFloat(bestBreak.unit_price.replace(/[^0-9.]/g, '')) || 0;
+      const orderQty = Math.max(qty, minQty);
+      const actualQty = mult > 1 ? Math.ceil(orderQty / mult) * mult : orderQty;
+      const totalCost = (unitPriceNum * actualQty).toFixed(2);
+
+      // Get currency from first price break
+      const currency = (part.PriceBreaks && part.PriceBreaks.length > 0 && part.PriceBreaks[0].Currency) || 'USD';
+
+      const result = {
+        found: true,
+        mpn_verified: part.ManufacturerPartNumber,
+        manufacturer: part.Manufacturer,
+        currency: currency,
+        packaging_options: [{
+          packaging: packaging,
+          min_qty: minQty,
+          price_breaks: priceBreaks
+        }],
+        best_option: {
+          packaging: packaging,
+          qty_to_order: actualQty,
+          unit_price: bestBreak.unit_price,
+          total_cost: '$' + totalCost,
+          reason: 'Qty ' + actualQty + ' at ' + bestBreak.unit_price + '/ea' + (actualQty !== qty ? ' (min order ' + minQty + ', mult ' + mult + ')' : '')
+        },
+        stock: part.Availability || (part.QuantityAvailable ? String(part.QuantityAvailable) : null),
+        status: part.LifecycleStatus || null,
+        datasheet_url: part.DataSheetUrl || null,
+        lead_time: part.LeadTime || null,
+        url: part.ProductDetailUrl || null
+      };
+
+      logAppend('log-verify', JSON.stringify(result, null, 2));
+      allResults.push(result);
+    }
+
+    stopTimer();
+
+    // Pick cheapest
+    let best = allResults[0];
+    if (allResults.length > 1) {
+      best = allResults.reduce((a, b) => {
+        const aCost = parseFloat((a.best_option.total_cost || '999999').replace(/[^0-9.]/g, ''));
+        const bCost = parseFloat((b.best_option.total_cost || '999999').replace(/[^0-9.]/g, ''));
+        return bCost < aCost ? b : a;
+      });
+    }
+
+    showResult(best, pn, qty);
+    clearStatus();
+
+  } catch (e) {
+    stopTimer();
+    showStatus('Mouser API error: ' + e.message, 'error');
+    $('btn-search').disabled = false;
+  }
+}
+
+// ═════════════════════════════════════════════════════
+// DUCKDUCKGO LLM AGENT SEARCH
+// Step 1: Browser fetches DDG, JS parses links
+// Step 2: JS filters for product page candidates
+// Step 3: For each candidate, LLM visits page (its own tool) and extracts data
+// Step 4: Collect results, display best
+// ═════════════════════════════════════════════════════
+
+async function doDdgAgentSearch() {
+  const pn = $('pn').value.trim();
+  if (!pn) return;
+  const mfg = $('mfg').value.trim();
+  const qty = parseInt($('qty').value) || 1;
+  const hasMfg = mfg.length > 0;
+
+  // Reset UI
+  $('result').style.display = 'none';
+  $('instructions').style.display = 'none';
+  $('logs').style.display = 'block';
+  $('steps-bar').style.display = 'flex';
+  $('btn-search').disabled = true;
+  $('btn-reset').style.display = 'inline-block';
+  ['log-search-html','log-candidates','log-verify'].forEach(id => $(id).textContent = '');
+
+  startTimer();
+
+  // ── STEP 1: Fetch DuckDuckGo search results (browser fetch) ──
+  setStep(1);
+  const mfgQuery = hasMfg ? ' ' + mfg : '';
+  const query = pn + mfgQuery + ' buy price distributor';
+  showStatus('Searching DuckDuckGo: "' + query + '"...', 'info');
+
+  let searchResults = [];
+  try {
+    const ddgUrl = 'https://html.duckduckgo.com/html/?q=' + encodeURIComponent(query);
+    const { html } = await fetchPage(ddgUrl);
+    logAppend('log-search-html', 'DDG response: ' + html.length.toLocaleString() + ' chars');
+
+    // Parse search results
+    const linkRegex = /<a[^>]+class="result__a"[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/gi;
+    const snippetRegex = /<a[^>]+class="result__snippet"[^>]*>([\s\S]*?)<\/a>/gi;
+    let match;
+    while ((match = linkRegex.exec(html)) !== null && searchResults.length < 25) {
+      let url = match[1];
+      const uddg = url.match(/uddg=([^&]+)/);
+      if (uddg) url = decodeURIComponent(uddg[1]);
+      const title = match[2].replace(/<[^>]+>/g, '').trim();
+      searchResults.push({ title, url, snippet: '' });
+    }
+    let i = 0;
+    while ((match = snippetRegex.exec(html)) !== null && i < searchResults.length) {
+      searchResults[i].snippet = match[1].replace(/<[^>]+>/g, '').trim();
+      i++;
+    }
+    logAppend('log-search-html', 'Parsed ' + searchResults.length + ' results from DDG');
+  } catch (e) {
+    stopTimer();
+    showStatus('DuckDuckGo search failed: ' + e.message, 'error');
+    $('btn-search').disabled = false;
+    return;
+  }
+
+  // ── STEP 2: Filter for promising product page candidates ──
+  setStep(2);
+  showStatus('Evaluating search results for product pages...', 'info');
+
+  const pnLower = pn.toLowerCase();
+  const candidates = [];
+  const seenDomains = new Set();
+
+  const distributorPatterns = [
+    'digikey', 'mouser', 'newark', 'farnell', 'arrow', 'lcsc', 'octopart',
+    'element14', 'rs-online', 'avnet', 'future', 'jameco', 'componentsearchengine',
+    'findchips', 'onlinecomponents', 'tme.eu', 'rutronik', 'verical', 'tti'
+  ];
+  const productUrlPatterns = [
+    '/products/detail', '/productdetail', '/product/', '/part/',
+    '/pd/', '/p/', '/prices/', '/en/products/'
+  ];
+
+  for (const r of searchResults) {
+    const urlLower = r.url.toLowerCase();
+    const titleLower = r.title.toLowerCase();
+    const snippetLower = r.snippet.toLowerCase();
+    const combined = titleLower + ' ' + snippetLower + ' ' + urlLower;
+
+    // Skip ads, non-product pages
+    if (urlLower.includes('duckduckgo.com/y.js')) continue;
+    if (urlLower.includes('youtube.com') || urlLower.includes('wikipedia.org')) continue;
+
+    // Score the candidate
+    const hasPn = combined.includes(pnLower);
+    const isDistributor = distributorPatterns.some(d => urlLower.includes(d));
+    const hasProductUrl = productUrlPatterns.some(p => urlLower.includes(p));
+    const hasPriceHint = /price|pricing|\$|stock|buy|order|availability|in stock/i.test(combined);
+
+    let score = 0;
+    if (hasPn) score += 3;
+    if (isDistributor) score += 2;
+    if (hasProductUrl) score += 2;
+    if (hasPriceHint) score += 1;
+
+    if (score < 3) continue;  // need at least P/N or distributor+pricing
+
+    // Deduplicate by domain
+    const domain = r.url.match(/\/\/([^/]+)/)?.[1] || '';
+    if (seenDomains.has(domain)) continue;
+    seenDomains.add(domain);
+
+    candidates.push({ ...r, score, domain });
+    if (candidates.length >= 15) break;
+  }
+
+  candidates.sort((a, b) => b.score - a.score);
+
+  logAppend('log-candidates', 'Found ' + candidates.length + ' product page candidates:\n');
+  candidates.forEach((c, idx) => {
+    logAppend('log-candidates', (idx+1) + '. [score ' + c.score + '] ' + c.title.substring(0, 70));
+    logAppend('log-candidates', '   ' + c.url.substring(0, 100));
+  });
+
+  if (candidates.length === 0) {
+    stopTimer();
+    showResult({ found: false, reason: 'DuckDuckGo returned no product pages for "' + pn + '". Results: ' + searchResults.map(r => r.title).join('; ').substring(0, 200) }, pn, qty);
+    clearStatus();
+    return;
+  }
+
+  // ── STEP 3: For each candidate, ask LLM to visit and extract (with tool-calling loop) ──
+  setStep(3);
+  const allResults = [];
+
+  // Tool definition passed to LLM so it knows visit_website is available
+  const visitTool = {
+    type: 'function',
+    function: {
+      name: 'visit_website',
+      description: 'Fetch a webpage and return its text content. Use this to visit product pages and extract pricing data.',
+      parameters: {
+        type: 'object',
+        properties: { url: { type: 'string', description: 'The full URL to visit' } },
+        required: ['url']
+      }
+    }
+  };
+
+  for (let idx = 0; idx < candidates.length; idx++) {
+    const c = candidates[idx];
+    showStatus('Visiting page ' + (idx+1) + '/' + candidates.length + ': ' + c.domain + '...', 'info');
+    logAppend('log-verify', '\n── Candidate ' + (idx+1) + ': ' + c.url + ' ──');
+
+    const visitPrompt = `Use the visit_website tool to fetch this URL: ${c.url}
+
+Then extract pricing for part number "${pn}"${hasMfg ? ' by "' + mfg + '"' : ''}.
+
+Be brief. Respond with ONLY a JSON object, no explanation:
+
+If pricing found:
+{"found":true,"mpn_verified":"${pn}","manufacturer":"name","currency":"USD","price":"$X.XX","price_breaks":[{"qty":1,"unit_price":"$X.XX"}],"stock":"qty","status":"Active/Obsolete/null","datasheet_url":"url/null","lead_time":"time/null","url":"${c.url}","source":"distributor","completeness":"brief note"}
+
+If part is obsolete with no pricing: {"found":false,"reason":"Obsolete, no pricing available","url":"${c.url}"}
+If page blocked or no data: {"found":false,"reason":"brief reason","url":"${c.url}"}
+
+MPN must match "${pn}" exactly.${hasMfg ? ' Manufacturer must match "' + mfg + '".' : ''} Partial data OK.`;
+
+    try {
+      // Multi-turn tool-calling loop per candidate
+      let messages = [{ role: 'user', content: visitPrompt }];
+      let finalResult = null;
+      const MAX_TOOL_ROUNDS = 3;  // max tool call rounds per candidate
+
+      for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+        const resp = await fetch(LLM_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: 'local-model',
+            messages: messages,
+            tools: [visitTool],
+            max_tokens: 4000,
+            temperature: 0,
+          }),
+        });
+        const data = await resp.json();
+        if (data.error) throw new Error(typeof data.error === 'string' ? data.error : JSON.stringify(data.error));
+
+        const choice = data.choices && data.choices[0];
+        if (!choice) throw new Error('No response');
+
+        const msg = choice.message;
+        const tokens = data.usage ? data.usage.total_tokens : '?';
+
+        // Check for tool calls (proper field or embedded in reasoning)
+        let toolCalls = (msg.tool_calls && msg.tool_calls.length > 0) ? msg.tool_calls : [];
+
+        // Qwen thinking mode: tool calls may be in reasoning_content as XML
+        if (toolCalls.length === 0 && msg.reasoning_content) {
+          const rc = msg.reasoning_content;
+          const tcRegex = /<function=(\w+)>\s*<parameter=(\w+)>\s*([\s\S]*?)\s*<\/parameter>\s*<\/function>/g;
+          let tcMatch;
+          while ((tcMatch = tcRegex.exec(rc)) !== null) {
+            toolCalls.push({
+              type: 'function',
+              id: 'xml_' + idx + '_' + round + '_' + toolCalls.length,
+              function: { name: tcMatch[1], arguments: JSON.stringify({ [tcMatch[2]]: tcMatch[3].trim() }) }
+            });
+          }
+          if (toolCalls.length > 0) {
+            logAppend('log-verify', '  (Extracted tool call from reasoning)');
+          }
+        }
+
+        if (toolCalls.length > 0) {
+          // Execute tool calls — fetch the page via browser
+          messages.push({ role: 'assistant', content: msg.content || '', tool_calls: toolCalls });
+
+          for (const tc of toolCalls) {
+            let toolArgs = {};
+            try { toolArgs = JSON.parse(tc.function.arguments); } catch(e) {}
+            const visitUrl = toolArgs.url || c.url;
+            logAppend('log-verify', '  LLM requesting visit: ' + visitUrl.substring(0, 80));
+
+            let pageText;
+            try {
+              const { html } = await fetchPage(visitUrl);
+              const cleaned = cleanHtml(html, 'product');
+              logAppend('log-verify', '  Fetched: ' + html.length.toLocaleString() + ' raw → ' + cleaned.length.toLocaleString() + ' cleaned');
+              if (cleaned.length < 200 || /akamai|captcha|access denied/i.test(cleaned)) {
+                pageText = 'ERROR: Page blocked by bot protection (' + cleaned.length + ' chars). The page content is not available.';
+                logAppend('log-verify', '  ⚠ Page blocked');
+              } else {
+                pageText = cleaned.length > 15000 ? cleaned.substring(0, 15000) + '\n[TRUNCATED]' : cleaned;
+              }
+            } catch (e) {
+              pageText = 'ERROR: Could not fetch page: ' + e.message;
+              logAppend('log-verify', '  ⚠ Fetch failed: ' + e.message);
+            }
+
+            messages.push({ role: 'tool', tool_call_id: tc.id, content: pageText });
+          }
+          continue;  // next round — model will process tool results
+        }
+
+        // No tool calls — model gave final response
+        const responseText = msg.content || '';
+        const reasoningText = msg.reasoning_content || '';
+        logAppend('log-verify', '  LLM response: ' + tokens + ' tokens');
+
+        finalResult = extractJSON(responseText);
+        if (!finalResult && reasoningText) finalResult = extractJSON(reasoningText);
+        break;
+      }
+
+      if (finalResult) {
+        if (!finalResult.url) finalResult.url = c.url;
+        if (!finalResult.source) finalResult.source = c.domain;
+
+        if (finalResult.found) {
+          logAppend('log-verify', '✓ FOUND: ' + (finalResult.manufacturer || '?') + ' ' + (finalResult.mpn_verified || '?') + ' — ' + (finalResult.price || '?') + ' from ' + (finalResult.source || c.domain));
+          allResults.push(finalResult);
+        } else {
+          logAppend('log-verify', '✗ Not found: ' + (finalResult.reason || 'no data').substring(0, 100));
+        }
+      } else {
+        logAppend('log-verify', '✗ Could not parse LLM response');
+      }
+
+    } catch (e) {
+      logAppend('log-verify', '✗ Error: ' + e.message);
+    }
+  }
+
+  stopTimer();
+
+  // ── STEP 4: Pick best result ──
+  if (allResults.length === 0) {
+    showResult({ found: false, reason: 'Visited ' + candidates.length + ' product pages but could not extract pricing for "' + pn + '".' }, pn, qty);
+    clearStatus();
+    return;
+  }
+
+  logAppend('log-verify', '\n── Summary: ' + allResults.length + ' source(s) with pricing ──');
+  allResults.forEach((r, i) => {
+    logAppend('log-verify', (i+1) + '. ' + (r.source || '?') + ': ' + (r.price || '?') + ' — ' + (r.stock || '?') + ' in stock');
+  });
+
+  // Score by completeness (most non-null fields wins)
+  const scoredResults = allResults.map(r => {
+    let fields = 0;
+    if (r.mpn_verified) fields++;
+    if (r.manufacturer) fields++;
+    if (r.price) fields++;
+    if (r.price_breaks && r.price_breaks.length > 0) fields += 2;
+    if (r.stock) fields++;
+    if (r.status) fields++;
+    if (r.datasheet_url) fields++;
+    if (r.lead_time) fields++;
+    if (r.currency) fields++;
+    return { ...r, _score: fields };
+  });
+  scoredResults.sort((a, b) => b._score - a._score);
+
+  const best = scoredResults[0];
+  best.all_sources = allResults.map(r => ({
+    source: r.source || '?', price: r.price || '?', stock: r.stock || '?', url: r.url || '?'
+  }));
+  if (!best.notes && best.completeness) best.notes = best.completeness;
+  if (!best.notes) best.notes = allResults.length + ' source(s) found. Best result has ' + best._score + '/10 fields.';
+
+  showResult(best, pn, qty);
+  clearStatus();
+}
+
+// WEB SEARCH FLOW
+// ═════════════════════════════════════════════════════
+
+async function doWebSearch() {
+  const pn = $('pn').value.trim();
+  if (!pn) return;
+  const mfg = $('mfg').value.trim();
+  const qty = parseInt($('qty').value) || 1;
+  const siteName = $('site-name').value.trim();
+  const siteUrl = $('site-url').value.trim();
+  const searchUrl = siteUrl + encodeURIComponent(pn);
+  const hasMfg = mfg.length > 0;
+
+  // Reset UI
+  $('result').style.display = 'none';
+  $('instructions').style.display = 'none';
+  $('logs').style.display = 'block';
+  $('steps-bar').style.display = 'flex';
+  $('btn-search').disabled = true;
+  $('btn-reset').style.display = 'inline-block';
+  ['log-search-html','log-candidates','log-verify'].forEach(id => $(id).textContent = '');
+
+  startTimer();
+
+  // ═══════════════════════════════════════════════════
+  // STEP 1: Fetch search results page
+  // ═══════════════════════════════════════════════════
+  setStep(1);
+  showStatus('Fetching ' + siteName + ' search results...', 'info');
+
+  let searchHtml, landedUrl, rawHtml;
+  try {
+    const { html: raw, finalUrl } = await fetchPage(searchUrl);
+    rawHtml = raw;
+    landedUrl = finalUrl;
+    searchHtml = cleanHtml(raw, 'search');
+    $('log-search-html').textContent = searchHtml.substring(0, 5000) + (searchHtml.length > 5000 ? '\n\n[... ' + searchHtml.length + ' total chars]' : '');
+    showStatus('Page fetched: ' + rawHtml.length.toLocaleString() + ' raw → ' + searchHtml.length.toLocaleString() + ' cleaned. Analyzing...', 'info');
+  } catch (e) {
+    stopTimer();
+    showStatus('Failed to fetch search page: ' + e.message + '. Check CORS extension and visit the site first.', 'error');
+    $('btn-search').disabled = false;
+    return;
+  }
+
+  // ── Detect: did we land on a product page directly? ──
+  // Check URL patterns (redirect to product detail page)
+  const productUrlPatterns = ['/products/detail/', '/product/', '/productdetail/', '/p/', '/pd/'];
+  const urlLooksLikeProduct = productUrlPatterns.some(p => landedUrl.toLowerCase().includes(p));
+  // Check HTML content for product page indicators vs search results indicators
+  const htmlLower = searchHtml.toLowerCase();
+  const hasProductIndicators = (
+    (htmlLower.includes('manufacturer part') || htmlLower.includes('mfr part') || htmlLower.includes('mpn')) &&
+    (htmlLower.includes('add to cart') || htmlLower.includes('add to list') || htmlLower.includes('in-stock') || htmlLower.includes('in stock'))
+  );
+  const hasSearchIndicators = (
+    htmlLower.includes('results for') || htmlLower.includes('showing') && htmlLower.includes('results') ||
+    htmlLower.includes('exact match') || htmlLower.includes('did you mean')
+  );
+  const isProductPage = urlLooksLikeProduct || (hasProductIndicators && !hasSearchIndicators);
+
+  if (isProductPage) {
+    // ── Landed directly on product page — skip to verification ──
+    logAppend('log-candidates', 'Landed directly on product page (URL: ' + landedUrl + '). Skipping candidate search.');
+    setStep(2); // mark step 2 done
+    setStep(3);
+    showStatus('Landed on product page directly. Verifying MPN and extracting data...', 'info');
+
+    // Jump straight to verification — re-clean as product page for leaner text
+    const productHtml = cleanHtml(rawHtml, 'product');
+    const result = await verifyProductPage(productHtml, landedUrl, pn, mfg, hasMfg, qty, siteName);
+    stopTimer();
+    if (result) {
+      showResult(result, pn, qty);
+      clearStatus();
+    } else {
+      showStatus('Could not verify product page. Check logs below.', 'warn');
+      $('btn-search').disabled = false;
+    }
+    return;
+  }
+
+  // ═══════════════════════════════════════════════════
+  // STEP 2: LLM finds candidate product page URLs
+  // ═══════════════════════════════════════════════════
+  setStep(2);
+
+  const mfgInstruction = hasMfg
+    ? `The part should be made by "${mfg}" (abbreviations OK: "TI"="Texas Instruments", "ST"="STMicroelectronics", "ON"="onsemi"/"ON Semiconductor"). Rank listings from this manufacturer first, but include other manufacturers too — we will verify on the product page.`
+    : 'No manufacturer specified. Include all exact MPN matches from any manufacturer.';
+
+  const candidatePrompt = `You are analyzing a search results page from ${siteName}. Find product page URLs for parts matching manufacturer part number "${pn}".
+
+RULES:
+1. Look for product detail page links (URLs containing "/products/detail/", "/product/", or similar patterns).
+2. Only include listings where the displayed part number exactly matches "${pn}" — character for character. Do NOT include "${pn}/NOPB", "${pn}-ND", or other variants.
+3. ${mfgInstruction}
+4. Return up to ${MAX_CANDIDATES} candidate URLs, ranked by relevance.
+
+Your final output MUST be a JSON array of objects:
+[
+  {"url": "/path/to/product/page", "manufacturer": "name shown", "mpn": "part number shown"},
+  ...
+]
+
+If no matches found at all, return:
+[{"url": null, "reason": "explanation of what was found instead"}]
+
+HTML:
+${searchHtml}`;
+
+  let candidates = [];
+  try {
+    const { text, raw } = await callLLM(
+      'You analyze search results pages from electronics distributors and extract product page URLs. Output a JSON array.',
+      candidatePrompt
+    );
+    logAppend('log-candidates', 'LLM response tokens: ' + (raw.usage ? raw.usage.total_tokens : '?'));
+
+    let parsed = extractJSON(text);
+    // Normalize: if LLM returned a single object, wrap in array
+    if (parsed && !Array.isArray(parsed)) parsed = [parsed];
+
+    if (!parsed || parsed.length === 0) {
+      logAppend('log-candidates', 'Could not parse candidates. Raw:\n' + text.substring(0, 2000));
+      stopTimer();
+      showStatus('LLM did not return valid candidate URLs. Check log below.', 'warn');
+      $('btn-search').disabled = false;
+      return;
+    }
+
+    // Filter out null/error entries
+    candidates = parsed.filter(c => c.url && c.url !== null);
+    logAppend('log-candidates', 'Found ' + candidates.length + ' candidates:');
+    candidates.forEach((c, i) => logAppend('log-candidates', '  ' + (i+1) + '. ' + c.mpn + ' | ' + c.manufacturer + ' | ' + c.url));
+
+    if (candidates.length === 0) {
+      const reason = parsed[0] && parsed[0].reason ? parsed[0].reason : 'No exact MPN match in search results';
+      stopTimer();
+      showResult({ found: false, reason }, pn, qty);
+      clearStatus();
+      return;
+    }
+  } catch (e) {
+    stopTimer();
+    showStatus('LLM error analyzing search results: ' + e.message, 'error');
+    $('btn-search').disabled = false;
+    return;
+  }
+
+  // ═══════════════════════════════════════════════════
+  // STEP 3: Try each candidate — fetch + verify + extract
+  // Collect ALL matches, then pick the cheapest
+  // ═══════════════════════════════════════════════════
+  setStep(3);
+
+  const allMatches = [];
+
+  for (let i = 0; i < candidates.length; i++) {
+    const candidate = candidates[i];
+    const fullUrl = resolveUrl(candidate.url, searchUrl);
+    showStatus('Trying candidate ' + (i+1) + '/' + candidates.length + ': ' + (candidate.manufacturer || '') + ' — ' + fullUrl, 'info');
+    logAppend('log-verify', '\n── Candidate ' + (i+1) + ': ' + fullUrl + ' ──');
+
+    // Fetch the product page
+    let productHtml;
+    try {
+      const { html: raw } = await fetchPage(fullUrl);
+      productHtml = cleanHtml(raw, 'product');
+      logAppend('log-verify', 'Fetched: ' + raw.length.toLocaleString() + ' raw → ' + productHtml.length.toLocaleString() + ' cleaned');
+    } catch (e) {
+      logAppend('log-verify', 'FETCH FAILED: ' + e.message);
+      continue; // try next candidate
+    }
+
+    const result = await verifyProductPage(productHtml, fullUrl, pn, mfg, hasMfg, qty, siteName);
+    if (result && result.found) {
+      allMatches.push(result);
+      logAppend('log-verify', '✓ MATCH — ' + (result.best_option ? result.best_option.total_cost + ' (' + result.best_option.packaging + ')' : 'price found'));
+    } else if (result) {
+      logAppend('log-verify', '✗ NOT A MATCH: ' + (result.reason || 'unknown'));
+    }
+  }
+
+  stopTimer();
+
+  if (allMatches.length === 0) {
+    showResult({ found: false, reason: 'Checked ' + candidates.length + ' candidate product pages. None had an exact MPN match for "' + pn + '"' + (hasMfg ? ' from "' + mfg + '"' : '') + '.' }, pn, qty);
+    clearStatus();
+    return;
+  }
+
+  // Pick the match with the lowest total cost
+  let bestMatch = allMatches[0];
+  if (allMatches.length > 1) {
+    logAppend('log-verify', '\n── Comparing ' + allMatches.length + ' matches ──');
+    for (const m of allMatches) {
+      const cost = m.best_option && m.best_option.total_cost ? m.best_option.total_cost : 'unknown';
+      logAppend('log-verify', '  ' + (m.url || '?') + ' → ' + cost);
+    }
+    bestMatch = allMatches.reduce((best, cur) => {
+      const bestCost = parseFloat((best.best_option && best.best_option.total_cost || '999999').replace(/[^0-9.]/g, ''));
+      const curCost = parseFloat((cur.best_option && cur.best_option.total_cost || '999999').replace(/[^0-9.]/g, ''));
+      return curCost < bestCost ? cur : best;
+    });
+    logAppend('log-verify', '  Winner: ' + bestMatch.url);
+  }
+
+  showResult(bestMatch, pn, qty);
+  clearStatus();
+}
+
+// ── Display result ──────────────────────────────────
+
+function showResult(data, pn, qty) {
+  const el = $('result');
+  el.style.display = 'block';
+  $('btn-search').disabled = false;
+
+  if (data.found) {
+    const best = data.best_option || {};
+    // Fall back to legacy fields if best_option not present
+    const price = best.unit_price || data.price || 'See page';
+    const totalCost = best.total_cost || '';
+    const packaging = best.packaging || '';
+    const orderQty = best.qty_to_order || qty;
+    const currency = data.currency || '';
+
+    let html =
+      '<div style="font-size:12px;">Best price for qty ' + orderQty + (packaging ? ' (' + escapeHtml(packaging) + ')' : '') + (currency ? ' — ' + escapeHtml(currency) : '') + '</div>' +
+      '<div class="result-price">' + escapeHtml(price) + '/ea</div>' +
+      (totalCost ? '<div style="font-size:14px; font-weight:500; margin-bottom:10px; color:#27500a;">Total: ' + escapeHtml(totalCost) + '</div>' : '') +
+      '<div class="result-meta">' +
+        (data.mpn_verified ? '<div>MPN (verified): ' + escapeHtml(data.mpn_verified) + '</div>' : '') +
+        (data.manufacturer ? '<div>Manufacturer: ' + escapeHtml(data.manufacturer) + '</div>' : '') +
+        (currency ? '<div>Currency: ' + escapeHtml(currency) + '</div>' : '') +
+        (data.stock ? '<div>In stock: ' + escapeHtml(String(data.stock)) + '</div>' : '') +
+        (data.status ? '<div>Status: ' + escapeHtml(data.status) + '</div>' : '') +
+        (data.lead_time ? '<div>Lead time: ' + escapeHtml(data.lead_time) + '</div>' : '') +
+        (data.source ? '<div>Source: ' + escapeHtml(data.source) + '</div>' : '') +
+        (best.reason ? '<div>Recommendation: ' + escapeHtml(best.reason) + '</div>' : '') +
+        (data.notes ? '<div style="margin-top:4px; padding:6px 8px; background:rgba(0,0,0,0.04); border-radius:4px; font-style:italic;">Completeness: ' + escapeHtml(data.notes) + '</div>' : '') +
+        (data.completeness && !data.notes ? '<div style="margin-top:4px; padding:6px 8px; background:rgba(0,0,0,0.04); border-radius:4px; font-style:italic;">Completeness: ' + escapeHtml(data.completeness) + '</div>' : '') +
+        (data.url ? '<div><a href="' + escapeHtml(data.url) + '" target="_blank">Product page ↗</a></div>' : '') +
+        (data.datasheet_url ? '<div><a href="' + escapeHtml(data.datasheet_url) + '" target="_blank">Datasheet ↗</a></div>' : '');
+
+    // Show all packaging options if available
+    if (data.packaging_options && data.packaging_options.length > 0) {
+      html += '<div style="margin-top:10px; padding-top:8px; border-top:1px solid #c5d9a8;">';
+      html += '<div style="font-weight:500; margin-bottom:4px;">All packaging options:</div>';
+      for (const opt of data.packaging_options) {
+        const isBest = opt.packaging === packaging;
+        html += '<div style="margin-bottom:6px;' + (isBest ? ' font-weight:500;' : '') + '">';
+        html += escapeHtml(opt.packaging) + ' (min ' + (opt.min_qty || '?') + ')';
+        if (opt.price_breaks && opt.price_breaks.length > 0) {
+          const breaks = opt.price_breaks.map(b => b.qty + '+: ' + b.unit_price).join(', ');
+          html += ' — ' + escapeHtml(breaks);
+        }
+        if (isBest) html += ' ★';
+        html += '</div>';
+      }
+      html += '</div>';
+    } else if (data.price_breaks && data.price_breaks.length > 0) {
+      // DDG agent format — flat price_breaks array
+      html += '<div style="margin-top:10px; padding-top:8px; border-top:1px solid #c5d9a8;">';
+      html += '<div style="font-weight:500; margin-bottom:4px;">Price breaks:</div>';
+      const breaks = data.price_breaks.map(b => (b.qty || b.Quantity) + '+: ' + (b.unit_price || b.Price || b.price)).join(', ');
+      html += '<div>' + escapeHtml(breaks) + '</div>';
+      html += '</div>';
+    }
+
+    // Show all_sources if available (DDG agent multi-source results)
+    if (data.all_sources && data.all_sources.length > 1) {
+      html += '<div style="margin-top:10px; padding-top:8px; border-top:1px solid #c5d9a8;">';
+      html += '<div style="font-weight:500; margin-bottom:4px;">All sources found (' + data.all_sources.length + '):</div>';
+      for (const s of data.all_sources) {
+        html += '<div style="margin-bottom:3px; font-size:12px;">';
+        html += escapeHtml(s.source || '?') + ': ' + escapeHtml(s.price || '?');
+        if (s.stock) html += ' (' + escapeHtml(s.stock) + ' in stock)';
+        if (s.url) html += ' <a href="' + escapeHtml(s.url) + '" target="_blank">↗</a>';
+        html += '</div>';
+      }
+      html += '</div>';
+    }
+
+    html += '</div>';
+    el.className = 'result-card found';
+    el.innerHTML = html;
+  } else {
+    el.className = 'result-card not-found';
+    el.innerHTML =
+      '<div style="font-size:12px;">Not found</div>' +
+      '<div class="result-price">No exact match for ' + escapeHtml(pn) + '</div>' +
+      (data.reason ? '<div class="result-meta">Reason: ' + escapeHtml(data.reason) + '</div>' : '');
+  }
+}
+
+// ── Reset ───────────────────────────────────────────
+
+function doReset() {
+  clearInterval(timerInterval);
+  $('timer').textContent = '';
+  $('result').style.display = 'none';
+  $('status').innerHTML = '';
+  $('steps-bar').style.display = 'none';
+  $('logs').style.display = 'none';
+  $('instructions').style.display = 'block';
+  $('btn-search').disabled = false;
+  $('btn-reset').style.display = 'none';
+}
+
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'Enter' && !$('btn-search').disabled) doSearch();
+});
+
+</script>
+</body>
+</html>
