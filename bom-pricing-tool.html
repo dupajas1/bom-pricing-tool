@@ -939,6 +939,9 @@ ${productHtml}`;
       log('Could not parse response. Raw:\n' + text.substring(0, 1500));
       return null;
     }
+    // Sanitize URL fields — LLM sometimes returns link text instead of actual URLs
+    if (result.datasheet_url && !/^https?:\/\//i.test(result.datasheet_url)) result.datasheet_url = null;
+    if (result.url && !/^https?:\/\//i.test(result.url)) result.url = null;
     log('Result: ' + JSON.stringify(result, null, 2).substring(0, 500));
     return result;
   } catch (e) {
@@ -1239,6 +1242,9 @@ async function searchPartDdg(pn, mfg, qty) {
       if (result) {
         if (!result.url) result.url = c.url;
         if (!result.source) result.source = c.domain;
+        // Sanitize URL fields — LLM sometimes returns link text instead of actual URLs
+        if (result.datasheet_url && !/^https?:\/\//i.test(result.datasheet_url)) result.datasheet_url = null;
+        if (result.url && !/^https?:\/\//i.test(result.url)) result.url = null;
         if (result.found) { allResults.push(result); log('    ✓ ' + (result.price||'?') + ' from ' + result.source); }
       }
     } catch(e) {
