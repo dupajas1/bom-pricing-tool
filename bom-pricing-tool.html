@@ -52,6 +52,22 @@
   .badge.stock { background: #e6f1fb; color: #0c447c; }
   .hidden { display: none; }
   .cols-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .prov-tabs { display: flex; gap: 4px; margin-bottom: 10px; }
+  .prov-tab { padding: 5px 12px; font-size: 12px; border: 1px solid #d3d1c7; border-radius: 6px; background: #fff; cursor: pointer; color: #6b6a66; }
+  .prov-tab.on { background: #185fa5; color: #fff; border-color: #185fa5; }
+  .prov-section { display: none; }
+  .prov-section.active { display: block; }
+  .or-info { padding: 8px 12px; border-radius: 6px; background: #f1efe8; font-size: 11px; margin-top: 8px; }
+  .or-info .irow { display: flex; justify-content: space-between; padding: 2px 0; }
+  .or-info .ival { font-weight: 500; }
+  .or-info .ival.ok { color: #3b6d11; }
+  .or-info .ival.warn { color: #a32d2d; }
+  .session-panel { padding: 8px 12px; border-radius: 6px; background: #f1efe8; font-size: 11px; margin-top: 8px; }
+  .session-panel .irow { display: flex; justify-content: space-between; padding: 2px 0; }
+  .session-panel .ival { font-weight: 500; }
+  .conn-badge { font-size: 11px; font-weight: 500; }
+  .conn-badge.ok { color: #3b6d11; }
+  .conn-badge.err { color: #a32d2d; }
   @media (max-width: 700px) { .cols-2 { grid-template-columns: 1fr; } }
 </style>
 </head>
@@ -60,9 +76,62 @@
 <h1>BOM Pricing Review Tool</h1>
 <p class="subtitle">Upload a BOM, search distributors for pricing, export enriched results.</p>
 
-<div class="config-bar" id="llm-bar">
-  <span>LM Studio: <input id="llm-host" value="127.0.0.1:1234" placeholder="localhost:1234" style="width:160px; padding:3px 6px; font-size:12px; border:1px solid #d3d1c7; border-radius:4px;"> </span>
-  <span id="llm-status">Checking...</span>
+<div class="section" id="llm-bar">
+  <div class="section-title">LLM Provider</div>
+  <div class="prov-tabs">
+    <button class="prov-tab on" data-p="lmstudio" onclick="setProvider('lmstudio')">LM Studio</button>
+    <button class="prov-tab" data-p="openrouter" onclick="setProvider('openrouter')">OpenRouter</button>
+  </div>
+
+  <!-- LM Studio config -->
+  <div class="prov-section active" id="cfg-lmstudio">
+    <div class="row">
+      <div class="col grow">
+        <label class="fl">Endpoint</label>
+        <input id="llm-host" value="127.0.0.1:1234" placeholder="localhost:1234" style="width:100%;">
+      </div>
+      <div class="col" style="align-self:flex-end;">
+        <button onclick="checkLLM()" style="padding:7px 12px; font-size:12px;">Test</button>
+      </div>
+      <div class="col" style="align-self:flex-end;">
+        <span class="conn-badge err" id="llm-status">Checking...</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- OpenRouter config -->
+  <div class="prov-section" id="cfg-openrouter">
+    <div class="row" style="margin-bottom:6px;">
+      <div class="col grow">
+        <label class="fl">API Key (<a href="https://openrouter.ai/keys" target="_blank" style="color:#185fa5;">get one</a>)</label>
+        <input type="password" id="or-key" placeholder="sk-or-v1-…" style="width:100%;" autocomplete="off">
+      </div>
+      <div class="col" style="align-self:flex-end;">
+        <button onclick="connectOR()" style="padding:7px 12px; font-size:12px;">Connect</button>
+      </div>
+      <div class="col" style="align-self:flex-end;">
+        <span class="conn-badge err" id="or-status">Not connected</span>
+      </div>
+    </div>
+    <div class="col grow" style="margin-bottom:4px;">
+      <label class="fl">Model</label>
+      <select id="or-model" style="width:100%;"><option value="">— connect first —</option></select>
+    </div>
+    <div class="or-info" id="or-info" style="display:none;">
+      <div class="irow"><span>Credits remaining</span><span class="ival ok" id="or-credits">—</span></div>
+      <div class="irow"><span>Input price</span><span class="ival" id="or-price-in">—</span></div>
+      <div class="irow"><span>Output price</span><span class="ival" id="or-price-out">—</span></div>
+      <div class="irow"><span>Context window</span><span class="ival" id="or-ctx">—</span></div>
+    </div>
+  </div>
+
+  <!-- Session tracking -->
+  <div class="session-panel" id="session-panel" style="display:none;">
+    <div class="irow"><span>Session requests</span><span class="ival" id="s-reqs">0</span></div>
+    <div class="irow"><span>Input tokens</span><span class="ival" id="s-tok-in">0</span></div>
+    <div class="irow"><span>Output tokens</span><span class="ival" id="s-tok-out">0</span></div>
+    <div class="irow" id="s-cost-row"><span>Est. cost</span><span class="ival" id="s-cost">$0.000000</span></div>
+  </div>
 </div>
 
 <!-- ═══ Search Configuration ═══ -->
@@ -86,17 +155,17 @@
     <div class="col">
       <label class="fl">Distributor</label>
       <select id="site-select" onchange="onSiteSelect()">
-        <option value="Octopart|https://octopart.com/search?q=">Octopart</option>
         <option value="DigiKey|https://www.digikey.com/en/products/result?keywords=">DigiKey</option>
+        <option value="Octopart|https://octopart.com/search?q=">Octopart</option>
         <option value="Future Electronics|https://www.futureelectronics.com/search?text=">Future Electronics</option>
         <option value="custom">Custom...</option>
       </select>
     </div>
     <div class="col grow">
       <label class="fl">Search URL (MPN appended to end)</label>
-      <input id="site-url" value="https://octopart.com/search?q=" style="width:100%;">
+      <input id="site-url" value="https://www.digikey.com/en/products/result?keywords=" style="width:100%;">
     </div>
-    <input type="hidden" id="site-name" value="Octopart">
+    <input type="hidden" id="site-name" value="DigiKey">
   </div>
   <div id="mouser-api-config" class="row hidden">
     <div class="col grow">
@@ -166,6 +235,8 @@
     <button id="btn-stop" class="hidden" onclick="stopProcessing()">Stop</button>
     <button class="success hidden" id="btn-export" onclick="exportResults()">Export Results</button>
     <span class="timer" id="timer"></span>
+    <span id="token-counter" style="font-size:11px; color:#9a9990;"></span>
+    <span id="stream-status" style="font-size:11px; color:#9a9990;"></span>
     <span id="progress-text" style="font-size:12px; color:#6b6a66;"></span>
   </div>
   <div class="progress-bar hidden" id="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
@@ -195,7 +266,6 @@
     <em>Mouser API:</em> Direct API call — returns structured JSON, no LLM needed. Get a free key at <a href="https://www.mouser.com/api-hub/" target="_blank">mouser.com/api-hub</a>.<br>
     <em>DuckDuckGo:</em> Browser searches DDG for the part, identifies product pages, LLM visits each via tool-calling and extracts pricing from up to 15 sources.<br><br>
     <strong style="color:#1a1a1a;">Prerequisites</strong><br>
-    • Serve from localhost (e.g. <code>python serve.py</code>) — required for CORS<br>
     • Chrome with <a href="https://chromewebstore.google.com/detail/allow-cors-access-control/lhobafahddgcelffkeicbaginigeejlf" target="_blank">Allow CORS</a> extension enabled (set Origin mode to ORIGIN)<br>
     • Visit the distributor site once (establishes cookies) — for Web search method<br>
     • LM Studio running at 127.0.0.1:1234 with a model loaded (8B+ recommended)<br>
@@ -233,12 +303,16 @@ function getLlmUrl() {
 }
 const MOUSER_API_URL = "https://api.mouser.com/api/v1/search/partnumber";
 const MAX_CANDIDATES = 5;
-let bomData = [];        // parsed BOM rows [{row original data}]
-let bomHeaders = [];     // original column headers
-let bomResults = [];     // search results per row
+let llmProvider = 'lmstudio'; // lmstudio | openrouter
+let orModels = [], orSelectedModel = null;
+let session = { reqs: 0, tokIn: 0, tokOut: 0, cost: 0 };
+let bomData = [];
+let bomHeaders = [];
+let bomResults = [];
 let originalFileName = 'BOM';  // original uploaded file name
 let processing = false;
 let stopRequested = false;
+let currentAbort = null;  // AbortController for in-flight LLM requests
 let timerInterval = null;
 let startTime = 0;
 
@@ -259,12 +333,131 @@ function startTimer() {
 }
 function stopTimer() { clearInterval(timerInterval); $('timer').textContent = Math.round((Date.now() - startTime) / 1000) + 's'; }
 
+// ═══════════════════════════════════════════════════════
+// PROVIDER MANAGEMENT
+// ═══════════════════════════════════════════════════════
+
+function setProvider(p) {
+  llmProvider = p;
+  document.querySelectorAll('.prov-tab').forEach(b => b.classList.toggle('on', b.dataset.p === p));
+  document.querySelectorAll('.prov-section').forEach(s => s.classList.remove('active'));
+  $('cfg-' + p).classList.add('active');
+  $('s-cost-row').style.display = p === 'lmstudio' ? 'none' : 'flex';
+  try { localStorage.setItem('bom-llm-provider', p); } catch(e) {}
+
+  // Disconnect the other provider
+  if (p === 'lmstudio') {
+    $('or-status').textContent = 'Disconnected';
+    $('or-status').className = 'conn-badge err';
+  } else {
+    $('llm-status').textContent = 'Disconnected';
+    $('llm-status').className = 'conn-badge err';
+  }
+
+  checkLLM();
+}
+
+async function connectOR() {
+  const key = $('or-key').value.trim();
+  if (!key) { showStatus('Enter OpenRouter API key', 'error'); return; }
+  const hdr = { 'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json' };
+  log('Connecting to OpenRouter…');
+  try {
+    // Credits
+    try {
+      const cr = await fetch('https://openrouter.ai/api/v1/credits', { headers: hdr });
+      if (cr.ok) {
+        const cd = await cr.json();
+        const rem = Math.max(0, (cd.data?.total_credits || 0) - (cd.data?.total_usage || 0));
+        $('or-credits').textContent = '$' + rem.toFixed(4);
+        $('or-credits').className = rem < 0.01 ? 'ival warn' : 'ival ok';
+        log('Credits: $' + rem.toFixed(4));
+      }
+    } catch(e) {}
+
+    // Models — filter to text models (no image/embed/video)
+    const mr = await fetch('https://openrouter.ai/api/v1/models', { headers: hdr });
+    if (!mr.ok) throw new Error('HTTP ' + mr.status);
+    const md = await mr.json();
+    orModels = (md.data || []).filter(m => {
+      const id = m.id || '';
+      return !id.includes('embed') && !id.includes('imagen') && !id.includes('veo') && !id.includes('nano-banana');
+    });
+    orModels.sort((a, b) => parseFloat(a.pricing?.prompt || '999') - parseFloat(b.pricing?.prompt || '999'));
+
+    const sel = $('or-model');
+    sel.innerHTML = '';
+    orModels.forEach(m => {
+      const inP = parseFloat(m.pricing?.prompt || 0) * 1e6;
+      const outP = parseFloat(m.pricing?.completion || 0) * 1e6;
+      const opt = document.createElement('option');
+      opt.value = m.id;
+      opt.textContent = (inP === 0 && outP === 0 ? '🆓 ' : '') + m.id + ' — $' + inP.toFixed(2) + '/$' + outP.toFixed(2) + '/1M';
+      sel.appendChild(opt);
+    });
+
+    if (orModels.length) {
+      updateORInfo(orModels[0]);
+      log(orModels.length + ' models loaded');
+    }
+
+    // Restore saved model
+    try {
+      const saved = localStorage.getItem('bom-or-model');
+      if (saved) {
+        const match = orModels.find(x => x.id === saved);
+        if (match) { sel.value = saved; updateORInfo(match); }
+      }
+    } catch(e) {}
+
+    sel.onchange = function() {
+      const m = orModels.find(x => x.id === sel.value);
+      if (m) updateORInfo(m);
+      try { localStorage.setItem('bom-or-model', sel.value); } catch(e) {}
+    };
+
+    try { localStorage.setItem('bom-or-key', key); } catch(e) {}
+    $('or-info').style.display = 'block';
+    $('or-status').textContent = 'Connected';
+    $('or-status').className = 'conn-badge ok';
+    showStatus('OpenRouter connected — ' + orModels.length + ' models', 'success');
+  } catch(e) {
+    log('OpenRouter error: ' + e.message);
+    $('or-status').textContent = 'Error';
+    $('or-status').className = 'conn-badge err';
+    showStatus('OpenRouter connection failed: ' + e.message, 'error');
+  }
+}
+
+function updateORInfo(m) {
+  orSelectedModel = m;
+  const inP = parseFloat(m.pricing?.prompt || 0) * 1e6;
+  const outP = parseFloat(m.pricing?.completion || 0) * 1e6;
+  $('or-price-in').textContent = inP === 0 ? 'FREE' : '$' + inP.toFixed(2) + '/1M';
+  $('or-price-out').textContent = outP === 0 ? 'FREE' : '$' + outP.toFixed(2) + '/1M';
+  $('or-ctx').textContent = (m.context_length || 0).toLocaleString();
+}
+
+function trackUsage(inT, outT, inPrice, outPrice) {
+  session.reqs++;
+  session.tokIn += inT;
+  session.tokOut += outT;
+  session.cost += inT * inPrice + outT * outPrice;
+  $('session-panel').style.display = 'block';
+  $('s-reqs').textContent = session.reqs;
+  $('s-tok-in').textContent = session.tokIn.toLocaleString();
+  $('s-tok-out').textContent = session.tokOut.toLocaleString();
+  $('s-cost').textContent = '$' + session.cost.toFixed(6);
+  // Update persistent counter next to timer
+  $('token-counter').textContent = '↑' + session.tokIn.toLocaleString() + ' ↓' + session.tokOut.toLocaleString();
+}
+
 function toggleSearchMethod() {
   const method = $('search-method').value;
   $('web-config').style.display = method === 'web' ? 'flex' : 'none';
   $('mouser-api-config').className = method === 'mouser-api' ? 'row' : 'row hidden';
   $('ddg-config').className = method === 'ddg-agent' ? '' : 'hidden';
-  $('llm-bar').style.display = method === 'mouser-api' ? 'none' : 'flex';
+  $('llm-bar').style.display = method === 'mouser-api' ? 'none' : '';
   checkLLM();
   try { localStorage.setItem('bom-search-method', method); } catch(e) {}
 }
@@ -285,6 +478,10 @@ try {
   if (mk) $('mouser-api-key').value = mk;
   const lh = localStorage.getItem('bom-llm-host');
   if (lh) $('llm-host').value = lh;
+  const prov = localStorage.getItem('bom-llm-provider');
+  if (prov) setProvider(prov);
+  const ork = localStorage.getItem('bom-or-key');
+  if (ork) $('or-key').value = ork;
 } catch(e) {}
 document.addEventListener('DOMContentLoaded', function() {
   const k = $('mouser-api-key');
@@ -426,24 +623,147 @@ async function fetchPage(url) {
   return { html, finalUrl: resp.url || url };
 }
 
+const STREAM_STALL_TIMEOUT = 240000; // 240 seconds — no data received
+const STREAM_TOTAL_TIMEOUT = 480000; // 480 seconds — total time for entire LLM call
+
 async function callLLM(systemPrompt, userPrompt) {
-  const resp = await fetch(getLlmUrl(), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      model: 'local-model',
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt },
-      ],
-      max_tokens: 32000,
-      temperature: 0,
-    }),
-  });
-  const data = await resp.json();
-  if (data.error) throw new Error(typeof data.error === 'string' ? data.error : JSON.stringify(data.error));
-  const text = (data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content) || '';
-  return { text, raw: data };
+  const prov = llmProvider === 'openrouter' ? 'openrouter' : 'lmstudio';
+  return await callLLMStream(prov, systemPrompt, userPrompt);
+}
+
+// Unified streaming LLM call for both providers
+async function callLLMStream(provider, systemPrompt, userPrompt) {
+  const messages = [
+    { role: 'system', content: systemPrompt },
+    { role: 'user', content: userPrompt },
+  ];
+  let url, headers, body;
+
+  if (provider === 'openrouter') {
+    const key = $('or-key').value.trim();
+    const model = $('or-model').value;
+    if (!key || !model) throw new Error('OpenRouter not configured');
+    url = 'https://openrouter.ai/api/v1/chat/completions';
+    headers = { 'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json', 'HTTP-Referer': 'https://bom-pricing-tool.app', 'X-Title': 'BOM Pricing Review Tool' };
+    body = { model, messages, max_tokens: 32000, temperature: 0, stream: true };
+  } else {
+    url = getLlmUrl();
+    headers = { 'Content-Type': 'application/json' };
+    body = { model: 'local-model', messages, max_tokens: 32000, temperature: 0, stream: true };
+  }
+
+  currentAbort = new AbortController();
+  const resp = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body), signal: currentAbort.signal });
+  if (!resp.ok) {
+    const errText = await resp.text().catch(() => '');
+    throw new Error('HTTP ' + resp.status + ': ' + errText.substring(0, 300));
+  }
+
+  // Parse SSE stream with stall timeout
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder();
+  let accumulated = '';
+  let tokenCount = 0;
+  let usage = { prompt_tokens: 0, completion_tokens: 0 };
+  let buffer = '';
+  let stallTimer = null;
+  let stallAborted = false;
+  let totalTimedOut = false;
+
+  // Total timeout — kills the request regardless of token flow
+  const totalTimer = setTimeout(() => {
+    log('  ✗ Total timeout (' + (STREAM_TOTAL_TIMEOUT / 1000) + 's)');
+    totalTimedOut = true;
+    if (currentAbort) currentAbort.abort();
+  }, STREAM_TOTAL_TIMEOUT);
+
+  function resetStallTimer() {
+    if (stallTimer) clearTimeout(stallTimer);
+    stallTimer = setTimeout(() => {
+      log('  ✗ Stream stalled (no data for ' + (STREAM_STALL_TIMEOUT / 1000) + 's)');
+      stallAborted = true;
+      if (currentAbort) currentAbort.abort();
+    }, STREAM_STALL_TIMEOUT);
+  }
+
+  try {
+    resetStallTimer();
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      resetStallTimer();
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed || !trimmed.startsWith('data:')) continue;
+        const payload = trimmed.substring(5).trim();
+        if (payload === '[DONE]') continue;
+
+        try {
+          const chunk = JSON.parse(payload);
+          if (chunk.error) throw new Error(typeof chunk.error === 'string' ? chunk.error : JSON.stringify(chunk.error));
+          const delta = chunk.choices?.[0]?.delta;
+          if (delta?.content) {
+            accumulated += delta.content;
+            tokenCount++;
+            if (tokenCount % 5 === 0) {
+              $('stream-status').textContent = '⟳ ' + tokenCount + ' tokens';
+              $('token-counter').textContent = '↑' + session.tokIn.toLocaleString() + ' ↓' + (session.tokOut + tokenCount).toLocaleString();
+            }
+          }
+          if (chunk.usage) usage = chunk.usage;
+          if (chunk.x_groq?.usage) usage = chunk.x_groq.usage;
+        } catch (e) {
+          if (e.message.includes('HTTP') || e.message.includes('error')) throw e;
+        }
+      }
+    }
+  } catch (e) {
+    if (e.name === 'AbortError' && totalTimedOut) {
+      clearTimeout(stallTimer);
+      clearTimeout(totalTimer);
+      throw new Error('Total timeout (' + (STREAM_TOTAL_TIMEOUT / 1000) + 's)');
+    }
+    if (e.name === 'AbortError' && stallAborted) {
+      clearTimeout(stallTimer);
+      clearTimeout(totalTimer);
+      throw new Error('Stream stall timeout (' + (STREAM_STALL_TIMEOUT / 1000) + 's)');
+    }
+    throw e;
+  } finally {
+    if (stallTimer) clearTimeout(stallTimer);
+    clearTimeout(totalTimer);
+    currentAbort = null;
+    $('stream-status').textContent = '';
+  }
+
+  // Track usage
+  const inP = provider === 'openrouter' ? parseFloat(orSelectedModel?.pricing?.prompt || 0) : 0;
+  const outP = provider === 'openrouter' ? parseFloat(orSelectedModel?.pricing?.completion || 0) : 0;
+  trackUsage(usage.prompt_tokens || 0, usage.completion_tokens || tokenCount, inP, outP);
+
+  const raw = { choices: [{ message: { content: accumulated } }], usage };
+  return { text: accumulated, raw };
+}
+
+// Non-streaming fetch for DDG agent tool-calling (tool call deltas are complex to parse)
+function getLlmFetchConfig(messages, extraBody) {
+  const body = { messages, temperature: 0, ...extraBody };
+  if (llmProvider === 'openrouter') {
+    const key = $('or-key').value.trim();
+    body.model = $('or-model').value;
+    return {
+      url: 'https://openrouter.ai/api/v1/chat/completions',
+      headers: { 'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json', 'HTTP-Referer': 'https://bom-pricing-tool.app', 'X-Title': 'BOM Pricing Review Tool' },
+      body: body
+    };
+  }
+  body.model = 'local-model';
+  return { url: getLlmUrl(), headers: { 'Content-Type': 'application/json' }, body: body };
 }
 
 function extractJSON(text) {
@@ -483,8 +803,18 @@ function resolveUrl(relative, baseUrl) {
 
 async function checkLLM() {
   if ($('search-method').value === 'mouser-api') {
-    $('llm-status').textContent = 'Not needed for API search';
-    $('llm-status').style.color = '#6b6a66';
+    $('llm-status').textContent = 'Not needed';
+    $('llm-status').className = 'conn-badge';
+    return;
+  }
+  if (llmProvider === 'openrouter') {
+    const hasKey = !!$('or-key').value.trim();
+    const hasModel = !!$('or-model').value;
+    const ok = hasKey && hasModel;
+    $('llm-status').textContent = ok ? 'OpenRouter ready' : 'Configure OpenRouter';
+    $('llm-status').className = ok ? 'conn-badge ok' : 'conn-badge err';
+    $('or-status').textContent = ok ? 'Connected' : 'Not connected';
+    $('or-status').className = ok ? 'conn-badge ok' : 'conn-badge err';
     return;
   }
   try {
@@ -493,10 +823,10 @@ async function checkLLM() {
       body: JSON.stringify({ model: 'local-model', messages: [{ role: 'user', content: 'Reply: OK' }], max_tokens: 5, temperature: 0 }),
     });
     $('llm-status').textContent = resp.ok ? 'Connected' : 'Error';
-    $('llm-status').style.color = resp.ok ? '#27500a' : '#a32d2d';
+    $('llm-status').className = resp.ok ? 'conn-badge ok' : 'conn-badge err';
   } catch (e) {
     $('llm-status').textContent = 'Not reachable';
-    $('llm-status').style.color = '#a32d2d';
+    $('llm-status').className = 'conn-badge err';
   }
 }
 checkLLM();
@@ -612,6 +942,7 @@ ${productHtml}`;
     log('Result: ' + JSON.stringify(result, null, 2).substring(0, 500));
     return result;
   } catch (e) {
+    if (e.name === 'AbortError' || stopRequested) throw e;
     log('LLM ERROR: ' + e.message);
     return null;
   }
@@ -632,6 +963,7 @@ async function searchPart(pn, mfg, qty, config) {
     if (method === 'ddg-agent') return await searchPartDdg(pn, mfg, qty);
     return await searchPartWeb(pn, mfg, qty, config.siteName, config.siteUrl);
   } catch (e) {
+    if (e.name === 'AbortError' || stopRequested) throw e;  // let processBom handle stop
     log('ERROR: ' + e.message);
     return { found: false, reason: e.message, comments: 'Search error: ' + e.message };
   }
@@ -646,7 +978,7 @@ async function searchPartWeb(pn, mfg, qty, siteName, siteUrl) {
   // Fetch search page
   const { html: rawSearch, finalUrl: landedUrl } = await fetchPage(searchUrl);
   const searchHtml = cleanHtml(rawSearch, 'search');
-  log('Search page: ' + rawSearch.length.toLocaleString() + ' raw -> ' + searchHtml.length.toLocaleString() + ' cleaned');
+  log('Fetched: ' + rawSearch.length.toLocaleString() + ' raw -> ' + searchHtml.length.toLocaleString() + ' (search mode)');
 
   // Detect: landed on product page directly?
   const productUrlPatterns = ['/products/detail/', '/product/', '/productdetail/', '/p/', '/pd/'];
@@ -664,6 +996,7 @@ async function searchPartWeb(pn, mfg, qty, siteName, siteUrl) {
   if (urlLooksLikeProduct || (hasProductIndicators && !hasSearchIndicators)) {
     log('Landed directly on product page');
     const productHtml = cleanHtml(rawSearch, 'product');
+    log('Product cleaned: ' + productHtml.length.toLocaleString() + ' chars');
     const result = await verifyProductPage(productHtml, landedUrl, pn, mfg, hasMfg, qty, siteName);
     if (result && result.found) { result.source = siteName; result.url = result.url || landedUrl; return result; }
     return { found: false, reason: result ? result.reason : 'Verification failed', source: siteName };
@@ -697,7 +1030,10 @@ ${searchHtml}`;
       log('  ' + fullUrl.substring(0, 60) + ' -> ' + productHtml.length + ' chars');
       const result = await verifyProductPage(productHtml, fullUrl, pn, mfg, hasMfg, qty, siteName);
       if (result && result.found) { result.source = siteName; result.url = result.url || fullUrl; allMatches.push(result); }
-    } catch (e) { log('  Fetch error: ' + e.message); }
+    } catch (e) {
+      if (e.name === 'AbortError' || stopRequested) throw e;
+      log('  Fetch error: ' + e.message);
+    }
   }
 
   if (allMatches.length === 0) return { found: false, reason: 'No exact match on any candidate page', source: siteName };
@@ -850,14 +1186,25 @@ async function searchPartDdg(pn, mfg, qty) {
       let messages = [{ role: 'user', content: visitPrompt }];
       let result = null;
       for (let round = 0; round < 3; round++) {
-        const resp = await fetch(getLlmUrl(), {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ model: 'local-model', messages, tools: [visitTool], max_tokens: 4000, temperature: 0 }),
+        const cfg = getLlmFetchConfig(messages, { tools: [visitTool], max_tokens: 4000 });
+        currentAbort = new AbortController();
+        $('stream-status').textContent = '⟳ DDG agent...';
+        const resp = await fetch(cfg.url, {
+          method: 'POST', headers: cfg.headers,
+          body: JSON.stringify(cfg.body),
+          signal: currentAbort.signal,
         });
+        currentAbort = null;
+        $('stream-status').textContent = '';
         const data = await resp.json();
         if (data.error) break;
         const msg = data.choices?.[0]?.message;
         if (!msg) break;
+        // Track tokens
+        const u = data.usage || {};
+        const inP = llmProvider === 'openrouter' ? parseFloat(orSelectedModel?.pricing?.prompt || 0) : 0;
+        const outP = llmProvider === 'openrouter' ? parseFloat(orSelectedModel?.pricing?.completion || 0) : 0;
+        trackUsage(u.prompt_tokens || 0, u.completion_tokens || 0, inP, outP);
 
         // Check tool calls
         let toolCalls = (msg.tool_calls?.length > 0) ? msg.tool_calls : [];
@@ -894,7 +1241,10 @@ async function searchPartDdg(pn, mfg, qty) {
         if (!result.source) result.source = c.domain;
         if (result.found) { allResults.push(result); log('    ✓ ' + (result.price||'?') + ' from ' + result.source); }
       }
-    } catch(e) { log('    Error: ' + e.message); }
+    } catch(e) {
+      if (e.name === 'AbortError' || stopRequested) throw e;
+      log('    Error: ' + e.message);
+    }
   }
 
   if (allResults.length === 0) return { found: false, reason: 'DDG: visited ' + candidates.length + ' pages, no pricing found', source: 'DDG' };
@@ -1020,14 +1370,67 @@ function populateMapping() {
     bomHeaders.forEach((h, i) => { sel.innerHTML += '<option value="' + i + '">' + escapeHtml(h) + '</option>'; });
   }
 
-  // Auto-detect columns
+  // Auto-detect columns via keyword hints
+  let pnHintMatched = false, mfgHintMatched = false, qtyHintMatched = false, descHintMatched = false;
   bomHeaders.forEach((h, i) => {
     const hl = h.toLowerCase();
-    if (pnHints.some(p => hl.includes(p)) && !$('col-pn').value) $('col-pn').value = i;
-    if (mfgHints.some(p => hl.includes(p)) && !$('col-mfg').value) $('col-mfg').value = i;
-    if (qtyHints.some(p => hl.includes(p)) && !$('col-qty').value) $('col-qty').value = i;
-    if (descHints.some(p => hl.includes(p)) && !$('col-desc').value) $('col-desc').value = i;
+    if (pnHints.some(p => hl.includes(p)) && !pnHintMatched) { $('col-pn').value = i; pnHintMatched = true; }
+    if (mfgHints.some(p => hl.includes(p)) && !mfgHintMatched) { $('col-mfg').value = i; mfgHintMatched = true; }
+    if (qtyHints.some(p => hl.includes(p)) && !qtyHintMatched) { $('col-qty').value = i; qtyHintMatched = true; }
+    if (descHints.some(p => hl.includes(p)) && !descHintMatched) { $('col-desc').value = i; descHintMatched = true; }
   });
+
+  // If hint-based detection left gaps, try LLM
+  autoMapColumnsWithLLM(pnHintMatched, mfgHintMatched, qtyHintMatched, descHintMatched);
+}
+
+async function autoMapColumnsWithLLM(pnMapped, mfgMapped, qtyMapped, descMapped) {
+  if (pnMapped && qtyMapped && mfgMapped && descMapped) return;
+
+  // Gather a few sample data rows to help LLM disambiguate ambiguous headers
+  let sampleRows = '';
+  const sampleCount = Math.min(3, bomData.length);
+  if (sampleCount > 0) {
+    sampleRows = '\n\nSample data rows:\n';
+    for (let i = 0; i < sampleCount; i++) {
+      sampleRows += bomData[i].map((c, j) => j + ': ' + String(c || '').substring(0, 50)).join(' | ') + '\n';
+    }
+  }
+
+  const messages = [
+    { role: 'system', content: 'You map BOM (Bill of Materials) spreadsheet columns to standard fields. Respond with ONLY a JSON object, no explanation.' },
+    { role: 'user', content: 'Given these column headers from an electronics BOM spreadsheet:\n' +
+      bomHeaders.map((h, i) => i + ': ' + h).join('\n') +
+      sampleRows +
+      '\n\nMap to these fields:\n' +
+      '- part_number: the manufacturer part number (MPN) column — an alphanumeric code like "RC0402FR-0710KL" or "GRM155R71C104KA88D", NOT a line item number\n' +
+      '- manufacturer: the component manufacturer name (e.g. "Yageo", "Murata", "Texas Instruments")\n' +
+      '- quantity: how many of each component are needed per board (a numeric count)\n' +
+      '- description: a text description of the component (e.g. "10K ohm 1% resistor")\n' +
+      '\nReturn JSON: {"part_number": <index or null>, "manufacturer": <index or null>, "quantity": <index or null>, "description": <index or null>}' +
+      '\nUse the column index numbers shown above. Use null if no column matches.' }
+  ];
+
+  try {
+    const cfg = getLlmFetchConfig(messages, { max_tokens: 200, stream: false });
+    const resp = await fetch(cfg.url, {
+      method: 'POST', headers: cfg.headers, body: JSON.stringify(cfg.body),
+      signal: AbortSignal.timeout(5000)
+    });
+    if (!resp.ok) return;
+    const data = await resp.json();
+    const text = (data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content) || '';
+    const map = extractJSON(text);
+    if (!map) return;
+
+    const valid = (v) => typeof v === 'number' && v >= 0 && v < bomHeaders.length;
+    if (!pnMapped && valid(map.part_number)) $('col-pn').value = map.part_number;
+    if (!qtyMapped && valid(map.quantity)) $('col-qty').value = map.quantity;
+    if (!mfgMapped && valid(map.manufacturer)) $('col-mfg').value = map.manufacturer;
+    if (!descMapped && valid(map.description)) $('col-desc').value = map.description;
+  } catch (e) {
+    // LLM unavailable — silently keep hint-based mapping
+  }
 }
 
 // ═══════════════════════════════════════════════════════
@@ -1093,17 +1496,24 @@ function parsePriceNum(priceStr) {
 // "1" without decimal formatting → integer (actual component count)
 function isFractionalQty(rawVal, formattedVal) {
   // Prefer formatted value (from Excel cell formatting)
-  if (formattedVal && String(formattedVal).includes('.')) return true;
+  if (formattedVal && String(formattedVal).replace(/"/g, '').includes('.')) return true;
   // Fallback: check raw value (for CSV or manually typed)
-  return String(rawVal || '').includes('.');
+  return String(rawVal || '').replace(/"/g, '').includes('.');
+}
+
+// Parse qty value, stripping quotes (Excel text-formatted cells may have literal quotes)
+function parseQty(val) {
+  if (val === undefined || val === null) return 0;
+  const s = String(val).replace(/"/g, '').replace(/'/g, '').trim();
+  return parseFloat(s) || 0;
 }
 
 // Get qty display string preserving original decimal formatting
 function fmtQty(rowIdx, qtyCol) {
   const fmt = bomDataFormatted[rowIdx] ? bomDataFormatted[rowIdx][qtyCol] : null;
-  if (fmt && String(fmt).trim()) return String(fmt);
+  if (fmt && String(fmt).trim()) return String(fmt).replace(/"/g, '');
   const raw = bomData[rowIdx] ? bomData[rowIdx][qtyCol] : '';
-  return String(raw || '');
+  return String(raw || '').replace(/"/g, '');
 }
 
 function checkMfgMismatch(inputMfg, resultMfg) {
@@ -1139,10 +1549,23 @@ async function processBom() {
     mouserApiKey: $('mouser-api-key').value.trim(),
   };
 
+  // Detect retry mode: if any row already has a successful result, keep the table
+  const isRetry = bomResults.some(r => r && r.found);
+  const pendingRows = [];
+  for (let i = 0; i < bomData.length; i++) {
+    if (!bomResults[i] || !bomResults[i].found) pendingRows.push(i);
+  }
+
+  if (isRetry && pendingRows.length === 0) {
+    showStatus('All rows already have results. Load a new file to reprocess.', 'info');
+    return;
+  }
+
   processing = true;
   stopRequested = false;
   $('btn-process').disabled = true;
   $('btn-stop').className = '';
+  $('btn-stop').disabled = false;
   $('btn-export').className = 'success hidden';
   $('log-section').className = '';
   $('log').textContent = '';
@@ -1150,22 +1573,30 @@ async function processBom() {
   $('progress-bar').className = 'progress-bar';
 
   startTimer();
-  renderTable(pnCol, mfgCol, qtyCol, buildQty);
 
-  for (let i = 0; i < bomData.length; i++) {
+  if (isRetry) {
+    log('Retrying ' + pendingRows.length + ' incomplete row(s)...\n');
+  } else {
+    renderTable(pnCol, mfgCol, qtyCol, buildQty);
+  }
+
+  const rowsToProcess = isRetry ? pendingRows : bomData.map((_, i) => i);
+
+  for (let p = 0; p < rowsToProcess.length; p++) {
+    const i = rowsToProcess[p];
     if (stopRequested) { log('\n⚠ Stopped by user at row ' + (i + 1)); break; }
 
     const row = bomData[i];
     const pn = String(row[pnCol] || '').trim();
     const mfg = mfgCol >= 0 ? String(row[mfgCol] || '').trim() : '';
-    const lineQty = parseFloat(row[qtyCol]) || 1;
+    const lineQty = parseQty(row[qtyCol]) || 1;
     const neededQty = lineQty * buildQty;
     // For price tier lookup: if fractional and min_buy=1, use at least 1
     const lookupQty = Math.max(Math.ceil(neededQty), 1);
 
     // Update progress
-    $('progress-fill').style.width = ((i + 1) / bomData.length * 100) + '%';
-    $('progress-text').textContent = 'Processing ' + (i + 1) + '/' + bomData.length + ': ' + pn;
+    $('progress-fill').style.width = ((p + 1) / rowsToProcess.length * 100) + '%';
+    $('progress-text').textContent = 'Processing ' + (p + 1) + '/' + rowsToProcess.length + ': ' + pn;
     updateRowStatus(i, 'processing');
 
     if (!pn || pn === '—' || pn === '-' || pn.toLowerCase() === 'n/a') {
@@ -1179,29 +1610,58 @@ async function processBom() {
       const result = await searchPart(pn, mfg, lookupQty, config);
       bomResults[i] = result;
     } catch (e) {
+      if (e.name === 'AbortError' || stopRequested) {
+        bomResults[i] = { found: false, reason: 'Stopped by user', comments: 'Stopped' };
+        break;
+      }
       bomResults[i] = { found: false, reason: e.message, comments: 'Error: ' + e.message };
     }
 
     updateRowStatus(i, 'done');
     updateRowData(i, buildQty, mfg, qtyCol);
 
+    // Check stop after processing row
+    if (stopRequested) { log('\n⚠ Stopped by user after row ' + (i + 1)); break; }
+
     // Delay between requests to avoid rate limiting
-    if (i < bomData.length - 1) {
-      const delay = method === 'mouser-api' ? 1000 : 500;  // ms between requests
+    if (p < rowsToProcess.length - 1) {
+      const delay = method === 'mouser-api' ? 1000 : 500;
       await new Promise(r => setTimeout(r, delay));
     }
   }
 
   stopTimer();
   processing = false;
+  currentAbort = null;
+  $('stream-status').textContent = '';
   $('btn-process').disabled = false;
   $('btn-stop').className = 'hidden';
+  $('btn-stop').disabled = false;
   $('btn-export').className = 'success';
-  $('progress-text').textContent = 'Done!';
-  showStatus('Processed ' + bomData.length + ' rows in ' + $('timer').textContent + '.', 'success');
+
+  if (stopRequested) {
+    $('progress-text').textContent = 'Stopped';
+    showStatus('Stopped. Partial results available.', 'info');
+  } else {
+    $('progress-text').textContent = 'Done!';
+    const costStr = session.cost > 0 ? ' Cost: $' + session.cost.toFixed(6) + '.' : '';
+    showStatus('Processed ' + rowsToProcess.length + ' rows in ' + $('timer').textContent + '.' + costStr, 'success');
+  }
+  log('\n━━━ SESSION: ' + session.reqs + ' reqs, ' + session.tokIn.toLocaleString() + ' in + ' + session.tokOut.toLocaleString() + ' out' + (session.cost > 0 ? ', ~$' + session.cost.toFixed(6) : '') + ' ━━━');
+  // Refresh OpenRouter credits
+  if (llmProvider === 'openrouter') {
+    try {
+      const cr = await fetch('https://openrouter.ai/api/v1/credits', { headers: { 'Authorization': 'Bearer ' + $('or-key').value.trim() } });
+      if (cr.ok) { const cd = await cr.json(); const rem = Math.max(0, (cd.data?.total_credits || 0) - (cd.data?.total_usage || 0)); $('or-credits').textContent = '$' + rem.toFixed(4); }
+    } catch(e) {}
+  }
 }
 
-function stopProcessing() { stopRequested = true; $('btn-stop').disabled = true; }
+function stopProcessing() {
+  stopRequested = true;
+  if (currentAbort) { currentAbort.abort(); currentAbort = null; }
+  $('stream-status').textContent = '';
+}
 
 // ═══════════════════════════════════════════════════════
 // RESULTS TABLE
@@ -1254,12 +1714,12 @@ function updateRowData(i, buildQty, inputMfg, qtyCol) {
   if (r.found) {
     tr.className = 'found';
     const searchPrice = parsePriceNum(r.price || (r.best_option && r.best_option.unit_price));
-    const rawLineQty = parseFloat(cells[2 + mfgColPresent].textContent) || 1;
+    const rawLineQty = parseQty(cells[2 + mfgColPresent].textContent) || 1;
     const fractional = isFractionalQty(bomData[i] ? bomData[i][qtyCol] : '', bomDataFormatted[i] ? bomDataFormatted[i][qtyCol] : '');
     const minBuy = Math.max(1, r.min_buy_qty || (r.best_option && r.best_option.qty_to_order) || 1);
 
-    // Fractional qty with minBuy=1: adjust to 1 (can't buy fraction of a piece)
-    const lineQty = (fractional && rawLineQty < 1 && minBuy <= 1) ? 1 : rawLineQty;
+    // Always use rawLineQty as-is for extended price calculation
+    const lineQty = rawLineQty;
 
     // Build comments
     const comments = [];
@@ -1273,19 +1733,17 @@ function updateRowData(i, buildQty, inputMfg, qtyCol) {
     let extended = '';
 
     if (searchPrice < Infinity) {
-      if (minBuy > 1) {
+      if (minBuy > 1 || fractional) {
+        // Box/package calculation — applies when minBuy > 1 OR qty is fractional
         let totalUnits, boxes, totalCost, actualQtyPerUnit;
 
         if (fractional) {
-          // Fractional qty: qty represents fraction of a package
-          // Actual components per build unit = qty × minBuy
           totalUnits = rawLineQty * minBuy * buildQty;
           boxes = Math.ceil(totalUnits / minBuy);
           totalCost = boxes * minBuy * searchPrice;
-          displayPriceEach = totalCost / totalUnits;
+          displayPriceEach = searchPrice;
           actualQtyPerUnit = rawLineQty * minBuy;
         } else {
-          // Integer qty: qty is actual component count
           totalUnits = rawLineQty * buildQty;
           boxes = Math.ceil(totalUnits / minBuy);
           totalCost = boxes * minBuy * searchPrice;
@@ -1293,18 +1751,20 @@ function updateRowData(i, buildQty, inputMfg, qtyCol) {
           actualQtyPerUnit = rawLineQty;
         }
 
-        extended = (displayPriceEach * actualQtyPerUnit).toFixed(2);
-        const minQtyCost = (boxes * minBuy * searchPrice).toFixed(2);
-        comments.push('Price adjusted for minimum qty (' + boxes + ' × ' + minBuy + ' units, min qty cost $' + minQtyCost + ')');
+        extended = (totalCost / buildQty).toFixed(2);
+        // Only add comment if there's actual overbuy
+        if (boxes * minBuy > totalUnits) {
+          const minQtyCost = (boxes * minBuy * searchPrice).toFixed(2);
+          comments.push('Price adjusted for minimum qty (' + boxes + ' × ' + minBuy + ' units, min qty cost $' + minQtyCost + ')');
+        }
       } else {
-        // min_buy = 1
-        if (fractional && rawLineQty < 1) comments.push('Qty adjusted to 1 (fractional)');
+        // Integer qty with minBuy = 1 — straightforward
         extended = (searchPrice * lineQty).toFixed(2);
       }
     }
 
     const priceEachStr = (searchPrice < Infinity)
-      ? (minBuy > 1 ? '$' + displayPriceEach.toFixed(5) : (r.price || (r.best_option && r.best_option.unit_price) || '—'))
+      ? ((minBuy > 1 || fractional) ? '$' + displayPriceEach.toFixed(5) : (r.price || (r.best_option && r.best_option.unit_price) || '—'))
       : '—';
 
     cells[dataStart].textContent = priceEachStr;
@@ -1362,12 +1822,12 @@ function exportResults() {
 
     if (r && r.found) {
       const searchPrice = parsePriceNum(r.price || (r.best_option && r.best_option.unit_price));
-      const rawLineQty = parseFloat(row[qtyCol]) || 1;
+      const rawLineQty = parseQty(row[qtyCol]) || 1;
       const fractional = isFractionalQty(row[qtyCol], bomDataFormatted[i] ? bomDataFormatted[i][qtyCol] : '');
       const minBuy = Math.max(1, r.min_buy_qty || (r.best_option && r.best_option.qty_to_order) || 1);
 
-      // Fractional qty with minBuy=1: adjust to 1
-      const lineQty = (fractional && rawLineQty < 1 && minBuy <= 1) ? 1 : rawLineQty;
+      // Always use rawLineQty as-is
+      const lineQty = rawLineQty;
 
       const comments = [];
       const mfgNote = checkMfgMismatch(inputMfg, r.manufacturer);
@@ -1380,14 +1840,14 @@ function exportResults() {
       let extended = '';
 
       if (searchPrice < Infinity) {
-        if (minBuy > 1) {
+        if (minBuy > 1 || fractional) {
           let totalUnits, boxes, totalCost, adjPrice, actualQtyPerUnit;
 
           if (fractional) {
             totalUnits = rawLineQty * minBuy * buildQty;
             boxes = Math.ceil(totalUnits / minBuy);
             totalCost = boxes * minBuy * searchPrice;
-            adjPrice = totalCost / totalUnits;
+            adjPrice = searchPrice;
             actualQtyPerUnit = rawLineQty * minBuy;
           } else {
             totalUnits = rawLineQty * buildQty;
@@ -1398,11 +1858,12 @@ function exportResults() {
           }
 
           displayPriceEach = '$' + adjPrice.toFixed(5);
-          extended = '$' + (adjPrice * actualQtyPerUnit).toFixed(2);
-          const minQtyCost = totalCost.toFixed(2);
-          comments.push('Price adjusted for minimum qty (' + boxes + ' \u00d7 ' + minBuy + ' units, min qty cost $' + minQtyCost + ')');
+          extended = '$' + (totalCost / buildQty).toFixed(2);
+          if (boxes * minBuy > totalUnits) {
+            const minQtyCost = totalCost.toFixed(2);
+            comments.push('Price adjusted for minimum qty (' + boxes + ' \u00d7 ' + minBuy + ' units, min qty cost $' + minQtyCost + ')');
+          }
         } else {
-          if (fractional && rawLineQty < 1) comments.push('Qty adjusted to 1 (fractional)');
           displayPriceEach = r.price || (r.best_option && r.best_option.unit_price) || '';
           extended = '$' + (searchPrice * lineQty).toFixed(2);
         }
@@ -1428,6 +1889,25 @@ function exportResults() {
   });
 
   const ws = XLSX.utils.aoa_to_sheet(outRows);
+
+  // Add hyperlinks to Price Link and Datasheet Link columns
+  const priceLinkCol = bomHeaders.length + 7;  // "Price Link" index in OUT_COLS
+  const datasheetCol = bomHeaders.length + 8;  // "Datasheet Link" index in OUT_COLS
+  const headerRows = $('add-header-row').checked ? 2 : 1; // account for inserted header row
+  bomData.forEach((row, i) => {
+    const r = bomResults[i];
+    if (!r || !r.found) return;
+    const excelRow = i + 1 + headerRows; // 1-indexed, skip header(s)
+    if (r.url) {
+      const addr = XLSX.utils.encode_cell({ r: excelRow, c: priceLinkCol });
+      if (ws[addr]) ws[addr].l = { Target: r.url, Tooltip: r.url };
+    }
+    if (r.datasheet_url) {
+      const addr = XLSX.utils.encode_cell({ r: excelRow, c: datasheetCol });
+      if (ws[addr]) ws[addr].l = { Target: r.datasheet_url, Tooltip: r.datasheet_url };
+    }
+  });
+
   const colWidths = outHeaders.map((h, ci) => {
     let maxLen = h.length;
     outRows.forEach(row => { const v = String(row[ci] || ''); if (v.length > maxLen) maxLen = v.length; });
