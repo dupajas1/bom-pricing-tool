@@ -234,6 +234,7 @@
     <button class="primary" id="btn-process" onclick="processBom()">Process BOM</button>
     <button id="btn-stop" class="hidden" onclick="stopProcessing()">Stop</button>
     <button class="success hidden" id="btn-export" onclick="exportResults()">Export Results</button>
+    <button class="primary" id="btn-datasheets" disabled onclick="saveDatasheets()">Save Datasheets</button>
     <span class="timer" id="timer"></span>
     <span id="token-counter" style="font-size:11px; color:#9a9990;"></span>
     <span id="stream-status" style="font-size:11px; color:#9a9990;"></span>
@@ -606,21 +607,41 @@ function cleanHtml(raw, mode) {
   return h;
 }
 
-async function fetchPage(url) {
-  let resp;
-  // Try with credentials (sends cookies cross-origin — needed for most sites)
-  try {
-    resp = await fetch(url, { credentials: 'include' });
-    if (resp.ok) {
-      const html = await resp.text();
-      return { html, finalUrl: resp.url || url };
+async function fetchPage(url, retries = 1) {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    let resp;
+    // Try with credentials (sends cookies cross-origin — needed for most sites)
+    try {
+      resp = await fetch(url, { credentials: 'include' });
+      if (resp.ok) {
+        const html = await resp.text();
+        return { html, finalUrl: resp.url || url };
+      }
+    } catch (e) { /* fall through */ }
+    // Fallback: no credentials
+    try {
+      resp = await fetch(url);
+      if (resp.ok) {
+        const html = await resp.text();
+        return { html, finalUrl: resp.url || url };
+      }
+      if (resp.status === 403 && attempt < retries) {
+        const delay = 3000 * (attempt + 1);
+        log('  ⚠ HTTP 403 — retrying in ' + (delay / 1000) + 's...');
+        await new Promise(r => setTimeout(r, delay));
+        continue;
+      }
+      throw new Error('HTTP ' + resp.status + ' ' + resp.statusText);
+    } catch (e) {
+      if (attempt < retries && e.message.includes('403')) {
+        const delay = 3000 * (attempt + 1);
+        log('  ⚠ HTTP 403 — retrying in ' + (delay / 1000) + 's...');
+        await new Promise(r => setTimeout(r, delay));
+        continue;
+      }
+      throw e;
     }
-  } catch (e) { /* fall through */ }
-  // Fallback: no credentials
-  resp = await fetch(url);
-  if (!resp.ok) throw new Error('HTTP ' + resp.status + ' ' + resp.statusText);
-  const html = await resp.text();
-  return { html, finalUrl: resp.url || url };
+  }
 }
 
 const STREAM_STALL_TIMEOUT = 240000; // 240 seconds — no data received
@@ -1024,8 +1045,10 @@ ${searchHtml}`;
 
   // Verify each candidate
   const allMatches = [];
-  for (const cand of candidates) {
+  for (let ci = 0; ci < candidates.length; ci++) {
+    const cand = candidates[ci];
     if (!cand.url) continue;
+    if (ci > 0) await new Promise(r => setTimeout(r, 1500));
     const fullUrl = resolveUrl(cand.url, searchUrl);
     try {
       const { html: rawProd } = await fetchPage(fullUrl);
@@ -1352,6 +1375,7 @@ function interpretRows() {
   }
 
   bomResults = new Array(bomData.length).fill(null);
+  updateDatasheetBtn();
   $('file-info').textContent = originalFileName + ' — ' + bomHeaders.length + ' columns, ' + bomData.length + ' data rows' + (noHeader ? ' (no header)' : '');
   populateMapping();
 }
@@ -1625,6 +1649,7 @@ async function processBom() {
 
     updateRowStatus(i, 'done');
     updateRowData(i, buildQty, mfg, qtyCol);
+    updateDatasheetBtn();
 
     // Check stop after processing row
     if (stopRequested) { log('\n⚠ Stopped by user after row ' + (i + 1)); break; }
@@ -1790,6 +1815,11 @@ function updateRowData(i, buildQty, inputMfg, qtyCol) {
   }
 }
 
+function updateDatasheetBtn() {
+  const btn = $('btn-datasheets');
+  btn.disabled = !bomResults.some(r => r && r.datasheet_url && /^https?:\/\//i.test(r.datasheet_url));
+}
+
 // ═══════════════════════════════════════════════════════
 // EXPORT
 // ═══════════════════════════════════════════════════════
@@ -1929,6 +1959,108 @@ function exportResults() {
   const ts = now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0') + '-' + String(now.getDate()).padStart(2,'0') + '-' + String(now.getHours()).padStart(2,'0') + String(now.getMinutes()).padStart(2,'0');
   const exportName = originalFileName + '-Build Qty ' + buildQty + '-' + ts + '.xlsx';
   XLSX.writeFile(wb, exportName);
+}
+
+// ═══════════════════════════════════════════════════════
+// SAVE DATASHEETS
+// ═══════════════════════════════════════════════════════
+
+async function saveDatasheets() {
+  const pnCol = parseInt($('col-pn').value);
+  const mfgCol = $('col-mfg').value !== '' ? parseInt($('col-mfg').value) : -1;
+
+  // Build list of all BOM entries with their datasheet status
+  const entries = [];
+  for (let i = 0; i < bomResults.length; i++) {
+    const r = bomResults[i];
+    if (!r || !r.found) continue;
+    const manufacturer = (r.manufacturer || (mfgCol >= 0 ? String(bomData[i][mfgCol] || '') : '')).trim();
+    const partNumber = (r.mpn_verified || String(bomData[i][pnCol] || '')).trim();
+    if (!partNumber) continue;
+    const hasDatasheet = r.datasheet_url && /^https?:\/\//i.test(r.datasheet_url);
+    entries.push({ manufacturer, partNumber, url: hasDatasheet ? r.datasheet_url : null });
+  }
+
+  const downloadable = entries.filter(e => e.url);
+  if (downloadable.length === 0) { showStatus('No datasheets available to download.', 'error'); return; }
+
+  let dirHandle;
+  try {
+    dirHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
+  } catch (e) {
+    if (e.name === 'AbortError') return;
+    showStatus('Directory picker not supported. Use Chrome.', 'error');
+    return;
+  }
+
+  const usedNames = {};
+  let downloaded = 0, failed = 0, skipped = 0;
+  $('btn-datasheets').disabled = true;
+  $('log-section').className = '';
+  log('\n━━━ Save Datasheets ━━━');
+
+  // Reset progress bar
+  $('progress-bar').className = 'progress-bar';
+  $('progress-fill').style.width = '0%';
+  $('progress-text').textContent = '';
+
+  for (let ei = 0; ei < entries.length; ei++) {
+    const entry = entries[ei];
+    const label = (entry.manufacturer ? entry.manufacturer + ' ' : '') + entry.partNumber;
+    $('progress-fill').style.width = ((ei + 1) / entries.length * 100) + '%';
+
+    if (!entry.url) {
+      log(label + ' — datasheet not available');
+      skipped++;
+      continue;
+    }
+
+    let ext = 'pdf';
+    try {
+      const urlPath = new URL(entry.url).pathname;
+      const match = urlPath.match(/\.([a-zA-Z0-9]{2,5})$/);
+      if (match) ext = match[1].toLowerCase();
+    } catch (e) {}
+
+    const safeMfg = entry.manufacturer.replace(/[<>:"/\\|?*]/g, '_').trim();
+    const safePn = entry.partNumber.replace(/[<>:"/\\|?*]/g, '_').trim();
+    const baseName = safeMfg ? safeMfg + '_' + safePn : safePn;
+
+    let fileName = baseName + '.' + ext;
+    if (usedNames[fileName.toLowerCase()]) {
+      let counter = 1;
+      while (usedNames[(baseName + '(' + counter + ').' + ext).toLowerCase()]) counter++;
+      fileName = baseName + '(' + counter + ').' + ext;
+    }
+    usedNames[fileName.toLowerCase()] = true;
+
+    $('progress-text').textContent = 'Saving: ' + fileName;
+    showStatus('Saving: ' + fileName, 'info');
+
+    try {
+      const response = await fetch(entry.url);
+      if (!response.ok) throw new Error('HTTP ' + response.status);
+      const blob = await response.blob();
+      const fileHandle = await dirHandle.getFileHandle(fileName, { create: true });
+      const writable = await fileHandle.createWritable();
+      await writable.write(blob);
+      await writable.close();
+      downloaded++;
+      log(fileName + '\n  ' + entry.url);
+    } catch (e) {
+      log(fileName + ' — FAILED: ' + e.message + '\n  ' + entry.url);
+      failed++;
+    }
+  }
+
+  $('progress-fill').style.width = '100%';
+  $('btn-datasheets').disabled = false;
+  let msg = 'Downloaded ' + downloaded + '/' + downloadable.length + ' datasheets.';
+  if (failed > 0) msg += ' (' + failed + ' failed)';
+  if (skipped > 0) msg += ' (' + skipped + ' without datasheet)';
+  $('progress-text').textContent = msg;
+  showStatus(msg, failed > 0 ? 'info' : 'success');
+  log('━━━ ' + msg + ' ━━━');
 }
 
 </script>

@@ -377,21 +377,41 @@ function cleanHtml(raw, mode) {
 
 // ── Fetch a page ────────────────────────────────────
 
-async function fetchPage(url) {
-  let resp;
-  // Try with credentials (sends cookies cross-origin — needed for most sites)
-  try {
-    resp = await fetch(url, { credentials: 'include' });
-    if (resp.ok) {
-      const html = await resp.text();
-      return { html, finalUrl: resp.url || url };
+async function fetchPage(url, retries = 1) {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    let resp;
+    // Try with credentials (sends cookies cross-origin — needed for most sites)
+    try {
+      resp = await fetch(url, { credentials: 'include' });
+      if (resp.ok) {
+        const html = await resp.text();
+        return { html, finalUrl: resp.url || url };
+      }
+    } catch (e) { /* fall through */ }
+    // Fallback: no credentials
+    try {
+      resp = await fetch(url);
+      if (resp.ok) {
+        const html = await resp.text();
+        return { html, finalUrl: resp.url || url };
+      }
+      if (resp.status === 403 && attempt < retries) {
+        const delay = 3000 * (attempt + 1);
+        console.log('⚠ HTTP 403 — retrying in ' + (delay / 1000) + 's...');
+        await new Promise(r => setTimeout(r, delay));
+        continue;
+      }
+      throw new Error('HTTP ' + resp.status + ' ' + resp.statusText);
+    } catch (e) {
+      if (attempt < retries && e.message.includes('403')) {
+        const delay = 3000 * (attempt + 1);
+        console.log('⚠ HTTP 403 — retrying in ' + (delay / 1000) + 's...');
+        await new Promise(r => setTimeout(r, delay));
+        continue;
+      }
+      throw e;
     }
-  } catch (e) { /* fall through */ }
-  // Fallback: no credentials
-  resp = await fetch(url);
-  if (!resp.ok) throw new Error('HTTP ' + resp.status + ' ' + resp.statusText);
-  const html = await resp.text();
-  return { html, finalUrl: resp.url || url };
+  }
 }
 
 // ── Call LM Studio ──────────────────────────────────
@@ -1261,6 +1281,7 @@ ${searchHtml}`;
   const allMatches = [];
 
   for (let i = 0; i < candidates.length; i++) {
+    if (i > 0) await new Promise(r => setTimeout(r, 1500));
     const candidate = candidates[i];
     const fullUrl = resolveUrl(candidate.url, searchUrl);
     showStatus('Trying candidate ' + (i+1) + '/' + candidates.length + ': ' + (candidate.manufacturer || '') + ' — ' + fullUrl, 'info');
