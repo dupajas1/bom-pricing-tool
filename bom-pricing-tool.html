@@ -1808,6 +1808,9 @@ function updateRowData(i, buildQty, inputMfg, qtyCol) {
     cells[dataStart+7].innerHTML = r.url ? '<a href="' + escapeHtml(r.url) + '" target="_blank">Link</a>' : '—';
     cells[dataStart+8].innerHTML = r.datasheet_url ? '<a href="' + escapeHtml(r.datasheet_url) + '" target="_blank">PDF</a>' : '—';
     cells[dataStart+9].textContent = r.description || '—';
+    cells[dataStart+9].contentEditable = 'true';
+    cells[dataStart+9].style.cursor = 'text';
+    cells[dataStart+9].onblur = function() { r.description = this.textContent.trim() || ''; };
     cells[dataStart+10].textContent = comments.join('; ');
   } else {
     tr.className = 'error';
@@ -1965,6 +1968,34 @@ function exportResults() {
 // SAVE DATASHEETS
 // ═══════════════════════════════════════════════════════
 
+// Sanitize text for use in filenames (Windows + Mac + Linux safe)
+// Replaces invalid characters with visually similar valid alternatives:
+//   /  → ∕  (division slash U+2215)
+//   \  → ⧹  (reverse solidus operator U+29F9)
+//   :  → ꞉  (modifier letter colon U+A789)
+//   "  → ʺ  (modifier letter double prime U+02BA)
+//   <  → ﹤ (small less-than sign U+FE64)
+//   >  → ﹥ (small greater-than sign U+FE65)
+//   |  → ¦  (broken bar U+00A6)
+//   ?  → ⁇  (double question mark U+2047 — closest single-width)
+//   *  → ⁎  (low asterisk U+204E)
+// Also strips control chars (0x00-0x1F) and trailing dots/spaces (Windows)
+function safeFileName(str) {
+  return str
+    .replace(/\//g, '∕')
+    .replace(/\\/g, '⧹')
+    .replace(/:/g, '꞉')
+    .replace(/"/g, 'ʺ')
+    .replace(/</g, '﹤')
+    .replace(/>/g, '﹥')
+    .replace(/\|/g, '¦')
+    .replace(/\?/g, '⁇')
+    .replace(/\*/g, '⁎')
+    .replace(/[\x00-\x1f]/g, '')
+    .replace(/[. ]+$/, '')
+    .trim();
+}
+
 async function saveDatasheets() {
   const pnCol = parseInt($('col-pn').value);
   const mfgCol = $('col-mfg').value !== '' ? parseInt($('col-mfg').value) : -1;
@@ -1978,7 +2009,8 @@ async function saveDatasheets() {
     const partNumber = (r.mpn_verified || String(bomData[i][pnCol] || '')).trim();
     if (!partNumber) continue;
     const hasDatasheet = r.datasheet_url && /^https?:\/\//i.test(r.datasheet_url);
-    entries.push({ manufacturer, partNumber, url: hasDatasheet ? r.datasheet_url : null });
+    const description = (r.description || '').trim();
+    entries.push({ manufacturer, partNumber, description, url: hasDatasheet ? r.datasheet_url : null });
   }
 
   const downloadable = entries.filter(e => e.url);
@@ -2022,9 +2054,11 @@ async function saveDatasheets() {
       if (match) ext = match[1].toLowerCase();
     } catch (e) {}
 
-    const safeMfg = entry.manufacturer.replace(/[<>:"/\\|?*]/g, '_').trim();
-    const safePn = entry.partNumber.replace(/[<>:"/\\|?*]/g, '_').trim();
-    const baseName = safeMfg ? safeMfg + '_' + safePn : safePn;
+    const safeMfg = safeFileName(entry.manufacturer);
+    const safePn = safeFileName(entry.partNumber);
+    const safeDesc = safeFileName(entry.description);
+    let baseName = safeMfg ? safeMfg + '_' + safePn : safePn;
+    if (safeDesc) baseName += ' (' + safeDesc + ')';
 
     let fileName = baseName + '.' + ext;
     if (usedNames[fileName.toLowerCase()]) {
