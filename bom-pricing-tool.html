@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>BOM Pricing Review Tool</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f8f7f4; color: #1a1a1a; padding: 1.5rem; max-width: 1200px; margin: 0 auto; line-height: 1.5; }
@@ -39,6 +40,8 @@
   .results-table tr.found { background: #f5fae8; }
   .results-table tr.processing { background: #e6f1fb; }
   .results-table a { color: #185fa5; text-decoration: none; }
+  .results-table td.row-num { cursor: pointer; user-select: none; color: #9a9990; }
+  .results-table td.row-num:hover { background: #fee; color: #a32d2d; }
   .table-wrap { max-height: 500px; overflow: auto; border: 1px solid #e8e6df; border-radius: 8px; margin-top: 10px; }
   .status-msg { padding: 8px 12px; border-radius: 6px; font-size: 12px; margin-bottom: 8px; }
   .status-msg.info { background: #e6f1fb; color: #0c447c; }
@@ -143,6 +146,8 @@
       <select id="search-method" onchange="toggleSearchMethod()">
         <option value="web">Web search (fetch + LLM)</option>
         <option value="mouser-api">Mouser API</option>
+        <option value="digikey-api">DigiKey API</option>
+        <option value="octopart-api">Octopart (Nexar) API</option>
         <option value="ddg-agent">DuckDuckGo (LLM agent)</option>
       </select>
     </div>
@@ -155,22 +160,67 @@
     <div class="col">
       <label class="fl">Distributor</label>
       <select id="site-select" onchange="onSiteSelect()">
-        <option value="DigiKey|https://www.digikey.com/en/products/result?keywords=">DigiKey</option>
-        <option value="Octopart|https://octopart.com/search?q=">Octopart</option>
         <option value="Future Electronics|https://www.futureelectronics.com/search?text=">Future Electronics</option>
         <option value="custom">Custom...</option>
       </select>
     </div>
     <div class="col grow">
       <label class="fl">Search URL (MPN appended to end)</label>
-      <input id="site-url" value="https://www.digikey.com/en/products/result?keywords=" style="width:100%;">
+      <input id="site-url" value="https://www.futureelectronics.com/search?text=" style="width:100%;">
     </div>
-    <input type="hidden" id="site-name" value="DigiKey">
+    <input type="hidden" id="site-name" value="Future Electronics">
+  </div>
+  <div id="digikey-api-config" class="row hidden" style="flex-wrap:wrap; gap:8px;">
+    <div class="col grow">
+      <label class="fl">Client ID (<a href="https://developer.digikey.com/" target="_blank" style="color:#185fa5;">developer.digikey.com</a>)</label>
+      <input id="dk-client-id" placeholder="Paste your DigiKey Client ID" style="width:100%;">
+    </div>
+    <div class="col grow">
+      <label class="fl">Client Secret</label>
+      <input id="dk-client-secret" type="password" placeholder="Paste your DigiKey Client Secret" style="width:100%;">
+    </div>
+    <div class="col">
+      <label class="fl">Site / Currency</label>
+      <select id="dk-locale">
+        <option value="US">US (USD)</option>
+        <option value="CA">Canada (CAD)</option>
+        <option value="AT">Europe (EUR)</option>
+        <option value="GB">UK (GBP)</option>
+      </select>
+    </div>
+  </div>
+  <div id="nexar-api-config" class="row hidden" style="flex-wrap:wrap; gap:8px;">
+    <div class="col grow">
+      <label class="fl">Client ID (<a href="https://nexar.com/api" target="_blank" style="color:#185fa5;">nexar.com/api</a>)</label>
+      <input id="nexar-client-id" placeholder="Paste your Nexar Client ID" style="width:100%;">
+    </div>
+    <div class="col grow">
+      <label class="fl">Client Secret</label>
+      <input id="nexar-client-secret" type="password" placeholder="Paste your Nexar Client Secret" style="width:100%;">
+    </div>
+    <div class="col">
+      <label class="fl">Currency</label>
+      <select id="nexar-currency">
+        <option value="USD">USD</option>
+        <option value="CAD">CAD</option>
+        <option value="EUR">EUR</option>
+        <option value="GBP">GBP</option>
+      </select>
+    </div>
   </div>
   <div id="mouser-api-config" class="row hidden">
     <div class="col grow">
       <label class="fl">Mouser Search API key (<a href="https://www.mouser.com/api-hub/" target="_blank" style="color:#185fa5;">get one free</a>)</label>
       <input id="mouser-api-key" placeholder="Paste your Mouser Search API key" style="width:100%;">
+    </div>
+    <div class="col">
+      <label class="fl">Site / Currency</label>
+      <select id="mouser-locale">
+        <option value="US|USD">US (USD)</option>
+        <option value="CA|CAD">Canada (CAD)</option>
+        <option value="AT|EUR">Europe (EUR)</option>
+        <option value="GB|GBP">UK (GBP)</option>
+      </select>
     </div>
   </div>
   <div id="ddg-config" class="hidden" style="font-size:12px; color:#6b6a66; padding:4px 0;">
@@ -194,19 +244,19 @@
   <div class="row">
     <div class="col grow">
       <label class="fl">Manufacturer (optional)</label>
-      <select id="col-mfg"><option value="">— None —</option></select>
+      <select id="col-mfg" onchange="refreshPreviewTable()"><option value="">— None —</option></select>
     </div>
     <div class="col grow">
       <label class="fl">Part Number (MPN) *</label>
-      <select id="col-pn"></select>
+      <select id="col-pn" onchange="refreshPreviewTable()"></select>
     </div>
     <div class="col grow">
       <label class="fl">Quantity *</label>
-      <select id="col-qty"></select>
+      <select id="col-qty" onchange="refreshPreviewTable()"></select>
     </div>
     <div class="col grow">
       <label class="fl">Description (optional)</label>
-      <select id="col-desc"><option value="">— None —</option></select>
+      <select id="col-desc" onchange="refreshPreviewTable()"><option value="">— None —</option></select>
     </div>
   </div>
   <div style="margin-top:8px; display:flex; gap:20px; align-items:center; flex-wrap:wrap;">
@@ -262,17 +312,20 @@
 <details style="margin-top:14px;">
   <summary style="font-size:13px; font-weight:500; color:#6b6a66; cursor:pointer;">App Info</summary>
   <div style="padding:1rem 1.25rem; border-radius:10px; background:#f1efe8; font-size:13px; color:#6b6a66; line-height:1.7; margin-top:6px;">
-    <strong style="color:#1a1a1a;">How this works</strong><br>
-    <em>Web search:</em> Browser fetches distributor pages, LLM analyzes them to find and verify product data.<br>
-    <em>Mouser API:</em> Direct API call — returns structured JSON, no LLM needed. Get a free key at <a href="https://www.mouser.com/api-hub/" target="_blank">mouser.com/api-hub</a>.<br>
-    <em>DuckDuckGo:</em> Browser searches DDG for the part, identifies product pages, LLM visits each via tool-calling and extracts pricing from up to 15 sources.<br><br>
+    <strong style="color:#1a1a1a;">Search methods</strong><br>
+    <em>Web search (fetch + LLM):</em> Browser fetches distributor pages; LLM identifies and verifies product data. Requires Allow CORS extension and LM Studio.<br>
+    <em>DuckDuckGo (LLM agent):</em> Searches DDG for the part, scores up to 15 product page candidates, LLM visits each via tool-calling to extract pricing. Requires tool-calling model. Because pages are fetched by LM Studio (not the browser), bot-protected sites like DigiKey and Mouser are often accessible.<br>
+    <em>Mouser API:</em> Direct REST API — structured JSON response, no LLM or CORS needed. Supports multi-currency (USD, CAD, EUR, GBP). Free key at <a href="https://www.mouser.com/api-hub/" target="_blank">mouser.com/api-hub</a>.<br>
+    <em>DigiKey API:</em> OAuth 2.0 client credentials — structured JSON, no LLM or CORS needed. Supports US, Canada, Europe, UK pricing. Free credentials at <a href="https://developer.digikey.com/" target="_blank">developer.digikey.com</a>.<br>
+    <em>Octopart (Nexar) API:</em> GraphQL API aggregating pricing from multiple distributors — no LLM or CORS needed. Returns best available offer per part with pricing, stock, datasheet, and lifecycle status. Free credentials at <a href="https://nexar.com/api" target="_blank">nexar.com/api</a>.<br><br>
     <strong style="color:#1a1a1a;">Prerequisites</strong><br>
+    <em>API methods (Mouser, DigiKey, Octopart):</em> No LLM or CORS extension required — just API credentials.<br>
+    <em>Web search &amp; DuckDuckGo:</em><br>
     • Chrome with <a href="https://chromewebstore.google.com/detail/allow-cors-access-control/lhobafahddgcelffkeicbaginigeejlf" target="_blank">Allow CORS</a> extension enabled (set Origin mode to ORIGIN)<br>
-    • Visit the distributor site once (establishes cookies) — for Web search method<br>
     • LM Studio running at 127.0.0.1:1234 with a model loaded (8B+ recommended)<br>
     • In LM Studio: Developer tab → Server settings → Enable CORS<br>
-    • For DuckDuckGo search: model must support tool/function calling (e.g. Qwen 2.5+, Llama 3.1+). Enable the <a href="https://lmstudio.ai/docs/features/tool-use" target="_blank">visit-website tool</a> in LM Studio.<br>
-    • Mouser API: no LLM needed, just a free API key<br><br>
+    • Visit the distributor site once before searching (establishes session cookies) — Web search only<br>
+    • DuckDuckGo: model must support tool/function calling (Qwen 2.5+, Llama 3.1+). Enable the <a href="https://lmstudio.ai/docs/features/tool-use" target="_blank">visit-website tool</a> in LM Studio.<br><br>
     <strong style="color:#1a1a1a;">Strict matching</strong><br>
     The MPN on the product page must exactly match what you searched — character for character.
     Manufacturer must match if specified (abbreviations OK: TI, ST, ON, etc.).
@@ -285,8 +338,20 @@
     For example: qty 0.001 with min buy 2500 means each unit uses 0.001 × 2500 = 2.5 components from a box of 2500.
     The tool calculates the number of boxes needed for the full build, spreads the total cost across all units,
     and shows the adjusted price per unit. A comment is added showing the box count and total min qty cost.
-    <em>Note:</em> To trigger fractional handling, format the qty cell with decimal places in Excel (e.g. "0.00") — 
-    a value of "1" (no decimal) is treated as 1 actual component, while "1.00" (with decimals) is treated as 1 full package.
+    <em>Note:</em> To trigger fractional handling, format the qty cell with decimal places in Excel (e.g. "0.00") —
+    a value of "1" (no decimal) is treated as 1 actual component, while "1.00" (with decimals) is treated as 1 full package.<br><br>
+    <strong style="color:#1a1a1a;">Workflow tips</strong><br>
+    • After dropping a BOM file, the results table appears immediately showing all rows before processing starts.<br>
+    • Column mapping dropdowns update the table preview instantly when changed.<br>
+    • Click any row's <strong>#</strong> number to clear its result and force a re-scan on the next run.<br>
+    • Re-running only re-processes failed/unprocessed rows — green (found) rows are skipped automatically.<br><br>
+    <strong style="color:#1a1a1a;">Save Datasheets</strong><br>
+    Downloads all datasheet PDFs from processed results. Files are named <em>Manufacturer_PartNumber (Description).pdf</em>.
+    In Chrome, you choose a destination folder and files are saved there directly (File System Access API).
+    In Firefox and Safari, a ZIP file is downloaded instead.<br>
+    If any datasheet cannot be fetched (CORS block, network error, or missing URL), a <code>_failed_links_TIMESTAMP.html</code>
+    report is included alongside the downloaded files. It shows the expected filename and a clickable URL for each problem entry,
+    so you can identify gaps and download them manually.
   </div>
 </details>
 
@@ -355,7 +420,8 @@ function setProvider(p) {
     $('llm-status').className = 'conn-badge err';
   }
 
-  checkLLM();
+  const method = $('search-method').value;
+  if (method !== 'mouser-api' && method !== 'digikey-api' && method !== 'octopart-api') checkLLM();
 }
 
 async function connectOR() {
@@ -457,9 +523,12 @@ function toggleSearchMethod() {
   const method = $('search-method').value;
   $('web-config').style.display = method === 'web' ? 'flex' : 'none';
   $('mouser-api-config').className = method === 'mouser-api' ? 'row' : 'row hidden';
+  $('digikey-api-config').className = method === 'digikey-api' ? 'row' : 'row hidden';
+  $('nexar-api-config').className = method === 'octopart-api' ? 'row' : 'row hidden';
   $('ddg-config').className = method === 'ddg-agent' ? '' : 'hidden';
-  $('llm-bar').style.display = method === 'mouser-api' ? 'none' : '';
-  checkLLM();
+  const noLlm = method === 'mouser-api' || method === 'digikey-api' || method === 'octopart-api';
+  $('llm-bar').style.display = noLlm ? 'none' : '';
+  if (!noLlm) checkLLM();
   try { localStorage.setItem('bom-search-method', method); } catch(e) {}
 }
 
@@ -477,6 +546,20 @@ try {
   if (sm) { $('search-method').value = sm; toggleSearchMethod(); }
   const mk = localStorage.getItem('bom-mouser-key');
   if (mk) $('mouser-api-key').value = mk;
+  const dkid = localStorage.getItem('bom-dk-client-id');
+  if (dkid) $('dk-client-id').value = dkid;
+  const dksc = localStorage.getItem('bom-dk-client-secret');
+  if (dksc) $('dk-client-secret').value = dksc;
+  const dkloc = localStorage.getItem('bom-dk-locale');
+  if (dkloc) $('dk-locale').value = dkloc;
+  const mloc = localStorage.getItem('bom-mouser-locale');
+  if (mloc) $('mouser-locale').value = mloc;
+  const nxid = localStorage.getItem('bom-nexar-client-id');
+  if (nxid) $('nexar-client-id').value = nxid;
+  const nxsc = localStorage.getItem('bom-nexar-client-secret');
+  if (nxsc) $('nexar-client-secret').value = nxsc;
+  const nxcur = localStorage.getItem('bom-nexar-currency');
+  if (nxcur) $('nexar-currency').value = nxcur;
   const lh = localStorage.getItem('bom-llm-host');
   if (lh) $('llm-host').value = lh;
   const prov = localStorage.getItem('bom-llm-provider');
@@ -487,6 +570,20 @@ try {
 document.addEventListener('DOMContentLoaded', function() {
   const k = $('mouser-api-key');
   if (k) k.addEventListener('change', function() { try { localStorage.setItem('bom-mouser-key', this.value); } catch(e) {} });
+  const dkid = $('dk-client-id');
+  if (dkid) dkid.addEventListener('change', function() { try { localStorage.setItem('bom-dk-client-id', this.value); } catch(e) {} });
+  const dksc = $('dk-client-secret');
+  if (dksc) dksc.addEventListener('change', function() { try { localStorage.setItem('bom-dk-client-secret', this.value); } catch(e) {} });
+  const dkloc = $('dk-locale');
+  if (dkloc) dkloc.addEventListener('change', function() { try { localStorage.setItem('bom-dk-locale', this.value); } catch(e) {} });
+  const mloc = $('mouser-locale');
+  if (mloc) mloc.addEventListener('change', function() { try { localStorage.setItem('bom-mouser-locale', this.value); } catch(e) {} });
+  const nxid = $('nexar-client-id');
+  if (nxid) nxid.addEventListener('change', function() { try { localStorage.setItem('bom-nexar-client-id', this.value); } catch(e) {} });
+  const nxsc = $('nexar-client-secret');
+  if (nxsc) nxsc.addEventListener('change', function() { try { localStorage.setItem('bom-nexar-client-secret', this.value); } catch(e) {} });
+  const nxcur = $('nexar-currency');
+  if (nxcur) nxcur.addEventListener('change', function() { try { localStorage.setItem('bom-nexar-currency', this.value); } catch(e) {} });
   const h = $('llm-host');
   if (h) h.addEventListener('change', function() {
     if (!this.value.trim()) this.value = 'localhost:1234';
@@ -607,12 +704,22 @@ function cleanHtml(raw, mode) {
   return h;
 }
 
+// CORS-safelisted headers that mimic browser navigation without triggering preflight
+// (Sec-Fetch-*, Referer, Cache-Control, Pragma are forbidden or trigger OPTIONS preflight)
+function browserHeaders() {
+  return {
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+    'Accept-Language': 'en-US,en;q=0.9',
+  };
+}
+
 async function fetchPage(url, retries = 1) {
+  const headers = browserHeaders();
   for (let attempt = 0; attempt <= retries; attempt++) {
     let resp;
-    // Try with credentials (sends cookies cross-origin — needed for most sites)
+    // Try with credentials + browser headers
     try {
-      resp = await fetch(url, { credentials: 'include' });
+      resp = await fetch(url, { credentials: 'include', headers });
       if (resp.ok) {
         const html = await resp.text();
         return { html, finalUrl: resp.url || url };
@@ -620,7 +727,7 @@ async function fetchPage(url, retries = 1) {
     } catch (e) { /* fall through */ }
     // Fallback: no credentials
     try {
-      resp = await fetch(url);
+      resp = await fetch(url, { headers });
       if (resp.ok) {
         const html = await resp.text();
         return { html, finalUrl: resp.url || url };
@@ -823,7 +930,8 @@ function resolveUrl(relative, baseUrl) {
 }
 
 async function checkLLM() {
-  if ($('search-method').value === 'mouser-api') {
+  const _sm = $('search-method').value;
+  if (_sm === 'mouser-api' || _sm === 'digikey-api' || _sm === 'octopart-api') {
     $('llm-status').textContent = 'Not needed';
     $('llm-status').className = 'conn-badge';
     return;
@@ -838,10 +946,13 @@ async function checkLLM() {
     $('or-status').className = ok ? 'conn-badge ok' : 'conn-badge err';
     return;
   }
+  $('llm-status').textContent = 'Checking...';
+  $('llm-status').className = 'conn-badge err';
   try {
     const resp = await fetch(getLlmUrl(), {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ model: 'local-model', messages: [{ role: 'user', content: 'Reply: OK' }], max_tokens: 5, temperature: 0 }),
+      signal: AbortSignal.timeout(5000),
     });
     $('llm-status').textContent = resp.ok ? 'Connected' : 'Error';
     $('llm-status').className = resp.ok ? 'conn-badge ok' : 'conn-badge err';
@@ -850,7 +961,8 @@ async function checkLLM() {
     $('llm-status').className = 'conn-badge err';
   }
 }
-checkLLM();
+// Only auto-check LLM on load if a LLM-based method is selected
+if ($('search-method').value !== 'mouser-api' && $('search-method').value !== 'digikey-api' && $('search-method').value !== 'octopart-api') checkLLM();
 
 // Dummy logAppend for verifyProductPage compatibility
 function logAppend(id, text) { log(text); }
@@ -983,7 +1095,9 @@ async function searchPart(pn, mfg, qty, config) {
   const method = config.method;
   log('\n━━━ Searching: ' + pn + (mfg ? ' (' + mfg + ')' : '') + ' qty=' + qty + ' via ' + method + ' ━━━');
   try {
-    if (method === 'mouser-api') return await searchPartMouser(pn, mfg, qty, config.mouserApiKey);
+    if (method === 'mouser-api') return await searchPartMouser(pn, mfg, qty, config.mouserApiKey, config.mouserLocale);
+    if (method === 'digikey-api') return await searchPartDigiKey(pn, mfg, qty, config.dkClientId, config.dkClientSecret, config.dkLocale);
+    if (method === 'octopart-api') return await searchPartNexar(pn, mfg, qty, config.nexarClientId, config.nexarClientSecret, config.nexarCurrency);
     if (method === 'ddg-agent') return await searchPartDdg(pn, mfg, qty);
     return await searchPartWeb(pn, mfg, qty, config.siteName, config.siteUrl);
   } catch (e) {
@@ -1076,13 +1190,19 @@ ${searchHtml}`;
 
 const MFG_ABBREVS = { 'ti': 'texas instruments', 'st': 'stmicroelectronics', 'on': 'onsemi', 'nxp': 'nxp semiconductors', 'adi': 'analog devices', 'mchp': 'microchip technology' };
 
-async function searchPartMouser(pn, mfg, qty, apiKey) {
+async function searchPartMouser(pn, mfg, qty, apiKey, locale) {
   if (!apiKey) return { found: false, reason: 'No Mouser API key', comments: 'Mouser API key not set' };
+
+  // Parse locale string "CC|CUR" e.g. "CA|CAD"
+  const localeParts = (locale || 'US|USD').split('|');
+  const countryCode = localeParts[0] || 'US';
+  const currencyCode = localeParts[1] || 'USD';
+  const localeParams = '&language=en&countryCode=' + countryCode + '&currencyCode=' + currencyCode;
 
   // Retry with backoff on 403 (rate limit)
   let resp;
   for (let attempt = 0; attempt < 3; attempt++) {
-    resp = await fetch(MOUSER_API_URL + '?apiKey=' + encodeURIComponent(apiKey), {
+    resp = await fetch(MOUSER_API_URL + '?apiKey=' + encodeURIComponent(apiKey) + localeParams, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ SearchByPartRequest: { mouserPartNumber: pn, partSearchOptions: 'Exact' } })
     });
@@ -1121,7 +1241,7 @@ async function searchPartMouser(pn, mfg, qty, apiKey) {
   // Convert best match
   const part = matches[0];
   const priceBreaks = (part.PriceBreaks || []).map(pb => ({ qty: parseInt(pb.Quantity) || 0, unit_price: pb.Price || '' }));
-  const currency = (part.PriceBreaks && part.PriceBreaks.length > 0 && part.PriceBreaks[0].Currency) || 'USD';
+  const currency = currencyCode || (part.PriceBreaks && part.PriceBreaks.length > 0 && part.PriceBreaks[0].Currency) || 'USD';
   const minQty = parseInt(part.Min) || 1;
   const mult = parseInt(part.Mult) || 1;
   let bestBreak = priceBreaks[0] || { qty: 1, unit_price: 'N/A' };
@@ -1144,6 +1264,427 @@ async function searchPartMouser(pn, mfg, qty, apiKey) {
     source: 'Mouser',
     description: part.Description || null,
     comments: null
+  };
+}
+
+// ── DigiKey API ─────────────────────────────────────
+
+const DK_TOKEN_URL = 'https://api.digikey.com/v1/oauth2/token';
+const DK_SEARCH_URL = 'https://api.digikey.com/products/v4/search/keyword';
+
+// Locale → currency map
+const DK_LOCALE_CURRENCY = { US: 'USD', CA: 'CAD', AT: 'EUR', GB: 'GBP' };
+// Locale → DigiKey site code
+const DK_LOCALE_SITE = { US: 'US', CA: 'CA', AT: 'AT', GB: 'GB' };
+
+// Token cache: { token, expiresAt }
+let dkTokenCache = null;
+
+async function getDkToken(clientId, clientSecret) {
+  const now = Date.now();
+  // Reuse cached token if still valid with 60s buffer
+  if (dkTokenCache && dkTokenCache.expiresAt > now + 60000) return dkTokenCache.token;
+
+  log('  DigiKey: requesting new OAuth token...');
+  const resp = await fetch(DK_TOKEN_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: 'grant_type=client_credentials&client_id=' + encodeURIComponent(clientId) + '&client_secret=' + encodeURIComponent(clientSecret),
+  });
+  if (!resp.ok) {
+    const err = await resp.text().catch(() => '');
+    throw new Error('DigiKey auth failed: HTTP ' + resp.status + ' ' + err.substring(0, 200));
+  }
+  const data = await resp.json();
+  if (!data.access_token) throw new Error('DigiKey auth: no access_token in response');
+  dkTokenCache = { token: data.access_token, expiresAt: now + (data.expires_in || 1800) * 1000 };
+  log('  DigiKey: token obtained, expires in ' + (data.expires_in || 1800) + 's');
+  return dkTokenCache.token;
+}
+
+async function searchPartDigiKey(pn, mfg, qty, clientId, clientSecret, locale) {
+  if (!clientId || !clientSecret) return { found: false, reason: 'DigiKey Client ID / Secret not set', comments: 'Configure DigiKey API credentials' };
+
+  const site = DK_LOCALE_SITE[locale] || 'US';
+  const currency = DK_LOCALE_CURRENCY[locale] || 'USD';
+
+  // Get token — retry once on auth failure (token may have been revoked)
+  let token;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      if (attempt > 0) { dkTokenCache = null; log('  DigiKey: re-authenticating...'); }
+      token = await getDkToken(clientId, clientSecret);
+      break;
+    } catch (e) {
+      if (attempt === 1) return { found: false, reason: e.message, comments: e.message };
+    }
+  }
+
+  const headers = {
+    'Authorization': 'Bearer ' + token,
+    'X-DIGIKEY-Client-Id': clientId,
+    'X-DIGIKEY-Locale-Site': site,
+    'X-DIGIKEY-Locale-Language': 'en',
+    'X-DIGIKEY-Locale-Currency': currency,
+    'Content-Type': 'application/json',
+  };
+
+  // Note: ManufacturerFilter requires numeric IDs — filter by name client-side instead
+  const body = { Keywords: pn, Limit: 10, Offset: 0 };
+
+  log('  DigiKey request → ' + DK_SEARCH_URL);
+  log('  Headers: site=' + site + ' currency=' + currency + ' lang=en');
+  log('  Body: ' + JSON.stringify(body));
+
+  let resp;
+  try {
+    resp = await fetch(DK_SEARCH_URL, { method: 'POST', headers, body: JSON.stringify(body) });
+  } catch (e) {
+    return { found: false, reason: 'DigiKey API fetch failed: ' + e.message, comments: e.message };
+  }
+
+  // If 401, token expired — clear cache and retry once
+  if (resp.status === 401) {
+    dkTokenCache = null;
+    log('  DigiKey: 401 — re-authenticating...');
+    try { token = await getDkToken(clientId, clientSecret); } catch (e) { return { found: false, reason: e.message }; }
+    headers['Authorization'] = 'Bearer ' + token;
+    try {
+      resp = await fetch(DK_SEARCH_URL, { method: 'POST', headers, body: JSON.stringify(body) });
+    } catch (e) { return { found: false, reason: 'DigiKey API fetch failed: ' + e.message }; }
+  }
+
+  log('  DigiKey response: HTTP ' + resp.status + ' ' + resp.statusText);
+
+  if (!resp.ok) {
+    const err = await resp.text().catch(() => '');
+    log('  DigiKey error body: ' + err.substring(0, 500));
+    return { found: false, reason: 'DigiKey API HTTP ' + resp.status, comments: err.substring(0, 200) };
+  }
+
+  const data = await resp.json();
+  const products = (data.Products) || [];
+  const exactMatches = (data.ExactMatches) || [];
+  // Search ExactMatches first (precise MPN hits), then fall back to Products
+  const allCandidates = exactMatches.length > 0 ? exactMatches : products;
+  log('  DigiKey: ' + products.length + ' products, ' + exactMatches.length + ' exact matches — searching ' + (exactMatches.length > 0 ? 'ExactMatches' : 'Products'));
+
+  if (allCandidates.length === 0) {
+    return { found: false, reason: 'No results from DigiKey API', source: 'DigiKey' };
+  }
+
+  const hasMfg = mfg && mfg.length > 0;
+
+  const matches = allCandidates.filter(p => {
+    const mpn = (p.ManufacturerProductNumber || '').trim();
+    if (mpn !== pn) return false;
+    if (hasMfg) {
+      const mfgL = mfg.toLowerCase();
+      const partMfgL = ((p.Manufacturer && p.Manufacturer.Name) || '').toLowerCase();
+      const expanded = MFG_ABBREVS[mfgL] || mfgL;
+      if (partMfgL !== mfgL && partMfgL !== expanded && !partMfgL.includes(expanded) && !expanded.includes(partMfgL)) return false;
+    }
+    return true;
+  });
+
+  if (matches.length === 0) {
+    const avail = allCandidates.filter(p => p.ManufacturerProductNumber === pn).map(p => p.Manufacturer && p.Manufacturer.Name).filter(Boolean).join(', ');
+    return { found: false, reason: hasMfg ? 'MPN found but not from "' + mfg + '". Available: ' + avail : 'No exact MPN match', source: 'DigiKey' };
+  }
+
+  const part = matches[0];
+  log('  Matched: ' + (part.ManufacturerProductNumber || '?') + ' | ' + ((part.Manufacturer && part.Manufacturer.Name) || '?'));
+  (part.ProductVariations || []).forEach(v => {
+    const pkg = (v.PackageType && v.PackageType.Name) || 'Unknown';
+    const minQ = v.MinimumOrderQuantity || 1;
+    const breaks = (v.StandardPricing || []).map(pb => pb.BreakQuantity + '@' + (pb.UnitPrice || 0).toFixed(4)).join(', ');
+    log('    ' + pkg + ' (min ' + minQ + '): ' + (breaks || 'no pricing'));
+  });
+  // Pricing is in ProductVariations[].StandardPricing (not part.StandardPricing which is null)
+  // Pick the variation with lowest min qty that satisfies requested qty, else lowest min overall
+  const variations = part.ProductVariations || [];
+  let bestVar = variations.find(v => (v.MinimumOrderQuantity || 1) <= qty) || variations[0];
+  // Among variations that fit qty, prefer lowest unit price at the right break
+  if (variations.length > 1) {
+    const fitting = variations.filter(v => (v.MinimumOrderQuantity || 1) <= qty);
+    if (fitting.length > 0) {
+      bestVar = fitting.reduce((best, v) => {
+        const getPrice = (vr) => { let p = (vr.StandardPricing || [])[0]; for (const pb of (vr.StandardPricing || [])) { if (pb.BreakQuantity <= qty) p = pb; } return p ? p.UnitPrice : Infinity; };
+        return getPrice(v) < getPrice(best) ? v : best;
+      });
+    }
+  }
+
+  const varPricing = (bestVar && bestVar.StandardPricing) || [];
+  const minQty = (bestVar && bestVar.MinimumOrderQuantity) || part.MinimumOrderQuantity || 1;
+  const packaging = (bestVar && bestVar.PackageType && bestVar.PackageType.Name) || 'Standard';
+
+  // Build price breaks from the best variation
+  const priceBreaks = varPricing.map(pb => ({
+    qty: pb.BreakQuantity || 1,
+    unit_price: (pb.UnitPrice || 0).toFixed(4) + ' ' + currency
+  }));
+
+  // Find best price break for requested qty
+  let bestBreak = varPricing[0] || null;
+  for (const pb of varPricing) { if (pb.BreakQuantity <= qty) bestBreak = pb; }
+  const unitPrice = bestBreak ? (bestBreak.UnitPrice || 0) : (part.UnitPrice || 0);
+  const unitPriceStr = unitPrice.toFixed(4) + ' ' + currency;
+  const orderQty = Math.max(qty, minQty);
+
+  const status = (part.ProductStatus && part.ProductStatus.Status) || null;
+  const stock = part.QuantityAvailable != null ? part.QuantityAvailable : null;
+  const leadTime = (part.ManufacturerLeadWeeks != null) ? part.ManufacturerLeadWeeks + ' weeks' : null;
+  const datasheetUrl = part.DatasheetUrl || null;
+  const productUrl = part.ProductUrl || null;
+  const description = part.Description && (part.Description.DetailedDescription || part.Description.ProductDescription) || null;
+  const manufacturer = (part.Manufacturer && part.Manufacturer.Name) || null;
+
+  return {
+    found: true,
+    mpn_verified: part.ManufacturerProductNumber,
+    manufacturer,
+    currency,
+    price: unitPriceStr,
+    price_breaks: priceBreaks,
+    best_option: { packaging, qty_to_order: orderQty, unit_price: unitPriceStr, total_cost: (unitPrice * orderQty).toFixed(2) + ' ' + currency },
+    stock,
+    min_buy_qty: minQty,
+    status,
+    datasheet_url: datasheetUrl && /^https?:\/\//i.test(datasheetUrl) ? datasheetUrl : null,
+    lead_time: leadTime,
+    url: productUrl,
+    source: 'DigiKey',
+    description,
+    comments: null
+  };
+}
+
+// ── Octopart / Nexar API ────────────────────────────
+
+const NEXAR_TOKEN_URL = 'https://identity.nexar.com/connect/token';
+const NEXAR_GRAPHQL_URL = 'https://api.nexar.com/graphql';
+
+// Token cache: { token, expiresAt }
+let nexarTokenCache = null;
+
+async function getNexarToken(clientId, clientSecret) {
+  const now = Date.now();
+  // Nexar tokens valid 24 h; reuse with 5-min buffer
+  if (nexarTokenCache && nexarTokenCache.expiresAt > now + 300000) return nexarTokenCache.token;
+
+  log('  Nexar: requesting new OAuth token...');
+  const resp = await fetch(NEXAR_TOKEN_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: 'grant_type=client_credentials&client_id=' + encodeURIComponent(clientId)
+        + '&client_secret=' + encodeURIComponent(clientSecret)
+        + '&scope=supply.domain',
+  });
+  if (!resp.ok) {
+    const err = await resp.text().catch(() => '');
+    throw new Error('Nexar auth failed: HTTP ' + resp.status + ' ' + err.substring(0, 200));
+  }
+  const data = await resp.json();
+  if (!data.access_token) throw new Error('Nexar auth: no access_token in response');
+  const expiresIn = data.expires_in || 86400;
+  nexarTokenCache = { token: data.access_token, expiresAt: now + expiresIn * 1000 };
+  log('  Nexar: token obtained, expires in ' + expiresIn + 's');
+  return nexarTokenCache.token;
+}
+
+const NEXAR_QUERY = `
+query SupSearch($mpn: String!, $currency: String!) {
+  supSearchMpn(q: $mpn, currency: $currency, limit: 5) {
+    hits
+    results {
+      part {
+        mpn
+        manufacturer { name }
+        shortDescription
+        bestDatasheet { url }
+        specs { attribute { shortname } displayValue }
+        sellers {
+          company { name isVerified }
+          offers {
+            clickUrl
+            inventoryLevel
+            moq
+            factoryLeadDays
+            packaging
+            prices { quantity convertedPrice convertedCurrency }
+          }
+        }
+      }
+    }
+  }
+}`.trim();
+
+async function searchPartNexar(pn, mfg, qty, clientId, clientSecret, currency) {
+  if (!clientId || !clientSecret) return { found: false, reason: 'Nexar Client ID / Secret not set', comments: 'Configure Octopart (Nexar) API credentials' };
+  currency = currency || 'USD';
+
+  // Get token — retry once on auth failure
+  let token;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      if (attempt > 0) { nexarTokenCache = null; log('  Nexar: re-authenticating...'); }
+      token = await getNexarToken(clientId, clientSecret);
+      break;
+    } catch (e) {
+      if (attempt === 1) return { found: false, reason: e.message, comments: e.message };
+    }
+  }
+
+  log('  Nexar request → ' + NEXAR_GRAPHQL_URL + ' | mpn=' + pn + ' currency=' + currency);
+
+  let resp;
+  try {
+    resp = await fetch(NEXAR_GRAPHQL_URL, {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: NEXAR_QUERY, variables: { mpn: pn, currency } }),
+    });
+  } catch (e) {
+    return { found: false, reason: 'Nexar API fetch failed: ' + e.message, comments: e.message };
+  }
+
+  // Re-auth on 401
+  if (resp.status === 401) {
+    nexarTokenCache = null;
+    log('  Nexar: 401 — re-authenticating...');
+    try { token = await getNexarToken(clientId, clientSecret); } catch (e) { return { found: false, reason: e.message }; }
+    try {
+      resp = await fetch(NEXAR_GRAPHQL_URL, {
+        method: 'POST',
+        headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: NEXAR_QUERY, variables: { mpn: pn, currency } }),
+      });
+    } catch (e) { return { found: false, reason: 'Nexar API fetch failed: ' + e.message }; }
+  }
+
+  log('  Nexar response: HTTP ' + resp.status);
+  if (!resp.ok) {
+    const err = await resp.text().catch(() => '');
+    log('  Nexar error body: ' + err.substring(0, 500));
+    return { found: false, reason: 'Nexar API HTTP ' + resp.status, comments: err.substring(0, 200) };
+  }
+
+  const data = await resp.json();
+  if (data.errors) {
+    log('  Nexar GraphQL errors: ' + JSON.stringify(data.errors).substring(0, 300));
+    return { found: false, reason: 'Nexar GraphQL error: ' + (data.errors[0] && data.errors[0].message), comments: JSON.stringify(data.errors[0]).substring(0, 200) };
+  }
+
+  const results = (data.data && data.data.supSearchMpn && data.data.supSearchMpn.results) || [];
+  const hits = (data.data && data.data.supSearchMpn && data.data.supSearchMpn.hits) || 0;
+  log('  Nexar: ' + hits + ' hits, ' + results.length + ' results returned');
+
+  if (results.length === 0) return { found: false, reason: 'No results from Nexar API', source: 'Octopart' };
+
+  // Find exact MPN match (case-insensitive), optionally filter by manufacturer
+  const hasMfg = mfg && mfg.length > 0;
+  let matches = results.filter(r => {
+    const part = r.part || {};
+    if ((part.mpn || '').toLowerCase() !== pn.toLowerCase()) return false;
+    if (hasMfg) {
+      const mfgL = mfg.toLowerCase();
+      const partMfgL = ((part.manufacturer && part.manufacturer.name) || '').toLowerCase();
+      const expanded = MFG_ABBREVS[mfgL] || mfgL;
+      if (partMfgL !== mfgL && partMfgL !== expanded && !partMfgL.includes(expanded) && !expanded.includes(partMfgL)) return false;
+    }
+    return true;
+  });
+
+  // If no exact match, try any result with matching MPN regardless of case
+  if (matches.length === 0) {
+    const avail = results.filter(r => (r.part && r.part.mpn || '').toLowerCase() === pn.toLowerCase())
+                         .map(r => r.part && r.part.manufacturer && r.part.manufacturer.name).filter(Boolean).join(', ');
+    return { found: false, reason: hasMfg ? 'MPN found but not from "' + mfg + '". Available: ' + avail : 'No exact MPN match', source: 'Octopart' };
+  }
+
+  const part = matches[0].part;
+  log('  Matched: ' + part.mpn + ' | ' + (part.manufacturer && part.manufacturer.name || '?'));
+
+  // Extract lifecycle status from specs
+  const lifecycleSpec = (part.specs || []).find(s => s.attribute && s.attribute.shortname === 'lifecyclestatus');
+  const status = lifecycleSpec ? lifecycleSpec.displayValue : null;
+
+  // Datasheet URL
+  const datasheetUrl = (part.bestDatasheet && part.bestDatasheet.url) || null;
+
+  // Description
+  const description = part.shortDescription || null;
+
+  // Manufacturer
+  const manufacturer = (part.manufacturer && part.manufacturer.name) || null;
+
+  // Find best seller offer: prefer verified distributors, best stock, lowest price for qty
+  const allOffers = [];
+  for (const seller of (part.sellers || [])) {
+    const sellerName = (seller.company && seller.company.name) || 'Unknown';
+    const verified = (seller.company && seller.company.isVerified) || false;
+    for (const offer of (seller.offers || [])) {
+      const stock = offer.inventoryLevel || 0;
+      const moq = offer.moq || 1;
+      const leadDays = offer.factoryLeadDays || null;
+      const packaging = offer.packaging || 'Standard';
+      const clickUrl = offer.clickUrl || null;
+      const prices = (offer.prices || []).filter(p => p.convertedPrice > 0);
+      if (prices.length === 0) continue;
+      // Find best price break for requested qty
+      let bestPrice = prices[0];
+      for (const p of prices) { if (p.quantity <= qty) bestPrice = p; }
+      allOffers.push({ sellerName, verified, stock, moq, leadDays, packaging, clickUrl, prices, bestPrice });
+    }
+  }
+
+  log('  Nexar: ' + allOffers.length + ' offers from ' + (part.sellers || []).length + ' sellers');
+  allOffers.forEach(o => log('    ' + o.sellerName + ': stock=' + o.stock + ' moq=' + o.moq + ' price=' + (o.bestPrice && o.bestPrice.convertedPrice) + ' ' + (o.bestPrice && o.bestPrice.convertedCurrency)));
+
+  if (allOffers.length === 0) {
+    return { found: false, reason: 'Part found but no pricing offers available', source: 'Octopart' };
+  }
+
+  // Score offers: verified > has stock >= qty > lowest price
+  allOffers.sort((a, b) => {
+    if (a.verified !== b.verified) return a.verified ? -1 : 1;
+    const aStock = a.stock >= qty ? 1 : 0;
+    const bStock = b.stock >= qty ? 1 : 0;
+    if (aStock !== bStock) return bStock - aStock;
+    const aPrice = a.bestPrice ? a.bestPrice.convertedPrice : Infinity;
+    const bPrice = b.bestPrice ? b.bestPrice.convertedPrice : Infinity;
+    return aPrice - bPrice;
+  });
+
+  const best = allOffers[0];
+  const unitPrice = best.bestPrice.convertedPrice;
+  const priceCurrency = best.bestPrice.convertedCurrency || currency;
+  const unitPriceStr = unitPrice.toFixed(4) + ' ' + priceCurrency;
+  const minQty = best.moq;
+  const orderQty = Math.max(qty, minQty);
+  const leadTime = best.leadDays != null ? Math.ceil(best.leadDays / 7) + ' weeks' : null;
+
+  // Build price breaks from best offer
+  const priceBreaks = best.prices.map(p => ({ qty: p.quantity, unit_price: p.convertedPrice.toFixed(4) + ' ' + (p.convertedCurrency || currency) }));
+
+  return {
+    found: true,
+    mpn_verified: part.mpn,
+    manufacturer,
+    currency: priceCurrency,
+    price: unitPriceStr,
+    price_breaks: priceBreaks,
+    best_option: { packaging: best.packaging, qty_to_order: orderQty, unit_price: unitPriceStr, total_cost: (unitPrice * orderQty).toFixed(2) + ' ' + priceCurrency },
+    stock: best.stock || null,
+    min_buy_qty: minQty,
+    status,
+    datasheet_url: datasheetUrl && /^https?:\/\//i.test(datasheetUrl) ? datasheetUrl : null,
+    lead_time: leadTime,
+    url: best.clickUrl || null,
+    source: 'Octopart (' + best.sellerName + ')',
+    description,
+    comments: best.sellerName ? 'Best offer: ' + best.sellerName : null
   };
 }
 
@@ -1176,7 +1717,7 @@ async function searchPartDdg(pn, mfg, qty) {
   const pnLower = pn.toLowerCase();
   const candidates = [];
   const seenDomains = new Set();
-  const distros = ['digikey','mouser','newark','farnell','arrow','lcsc','octopart','element14','rs-online','avnet','future','componentsearchengine','findchips','tme.eu'];
+  const distros = ['digikey','mouser','octopart','newark','farnell','arrow','lcsc','element14','rs-online','avnet','future','componentsearchengine','findchips','tme.eu'];
   const prodPats = ['/products/detail','/productdetail','/product/','/part/','/pd/','/p/','/prices/'];
   for (const r of searchResults) {
     const u = r.url.toLowerCase(), t = r.title.toLowerCase(), s = r.snippet.toLowerCase(), c = t + ' ' + s + ' ' + u;
@@ -1378,6 +1919,21 @@ function interpretRows() {
   updateDatasheetBtn();
   $('file-info').textContent = originalFileName + ' — ' + bomHeaders.length + ' columns, ' + bomData.length + ' data rows' + (noHeader ? ' (no header)' : '');
   populateMapping();
+  refreshPreviewTable();
+}
+
+function refreshPreviewTable() {
+  if (!bomData || bomData.length === 0) return;
+  const pnCol = parseInt($('col-pn').value);
+  const mfgCol = $('col-mfg').value !== '' ? parseInt($('col-mfg').value) : -1;
+  const qtyCol = parseInt($('col-qty').value);
+  const buildQty = parseInt($('build-qty').value) || 1;
+  renderTable(pnCol, mfgCol, qtyCol, buildQty);
+  $('results-section').className = 'section';
+  // Re-apply any existing results to the refreshed rows
+  if (bomResults.some(r => r)) {
+    bomData.forEach((_, i) => { if (bomResults[i]) updateRowData(i, buildQty, '', qtyCol); });
+  }
 }
 
 // Re-interpret when checkbox changes
@@ -1458,6 +2014,7 @@ async function autoMapColumnsWithLLM(pnMapped, mfgMapped, qtyMapped, descMapped)
     if (!qtyMapped && valid(map.quantity)) $('col-qty').value = map.quantity;
     if (!mfgMapped && valid(map.manufacturer)) $('col-mfg').value = map.manufacturer;
     if (!descMapped && valid(map.description)) $('col-desc').value = map.description;
+    refreshPreviewTable();  // re-render with LLM-corrected column mapping
   } catch (e) {
     // LLM unavailable — silently keep hint-based mapping
   }
@@ -1577,6 +2134,13 @@ async function processBom() {
     siteName: $('site-name').value,
     siteUrl: $('site-url').value,
     mouserApiKey: $('mouser-api-key').value.trim(),
+    mouserLocale: $('mouser-locale').value,
+    dkClientId: $('dk-client-id').value.trim(),
+    dkClientSecret: $('dk-client-secret').value.trim(),
+    dkLocale: $('dk-locale').value,
+    nexarClientId: $('nexar-client-id').value.trim(),
+    nexarClientSecret: $('nexar-client-secret').value.trim(),
+    nexarCurrency: $('nexar-currency').value,
   };
 
   // Detect retry mode: if any row already has a successful result, keep the table
@@ -1656,7 +2220,7 @@ async function processBom() {
 
     // Delay between requests to avoid rate limiting
     if (p < rowsToProcess.length - 1) {
-      const delay = method === 'mouser-api' ? 1000 : 500;
+      const delay = (method === 'mouser-api' || method === 'digikey-api' || method === 'octopart-api') ? 1000 : 500;
       await new Promise(r => setTimeout(r, delay));
     }
   }
@@ -1715,7 +2279,7 @@ function renderTable(pnCol, mfgCol, qtyCol, buildQty) {
   prefixedCols.forEach(c => h += '<th>' + c + '</th>');
   h += '</tr></thead><tbody id="results-body">';
   bomData.forEach((row, i) => {
-    h += '<tr id="row-' + i + '"><td>' + (i+1) + '</td>';
+    h += '<tr id="row-' + i + '"><td class="row-num" title="Click to reset row for re-scan" onclick="resetRow(' + i + ')">' + (i+1) + '</td>';
     h += '<td>' + escapeHtml(String(row[pnCol]||'')) + '</td>';
     if (mfgCol >= 0) h += '<td>' + escapeHtml(String(row[mfgCol]||'')) + '</td>';
     h += '<td>' + escapeHtml(fmtQty(i, qtyCol)) + '</td>';
@@ -1816,6 +2380,26 @@ function updateRowData(i, buildQty, inputMfg, qtyCol) {
     tr.className = 'error';
     cells[dataStart+10].textContent = r.reason || r.comments || 'Not found';
   }
+}
+
+function resetRow(i) {
+  if (!bomResults[i]) return; // not yet processed — nothing to reset
+  bomResults[i] = null;
+  const tr = $('row-' + i);
+  if (!tr) return;
+  tr.className = '';
+  // Blank out all data cells after the fixed columns (MPN, Mfg?, Qty)
+  const mfgColPresent = $('col-mfg').value !== '' ? 1 : 0;
+  const dataStart = 3 + mfgColPresent;
+  const cells = tr.querySelectorAll('td');
+  for (let c = dataStart; c < cells.length; c++) {
+    cells[c].textContent = '—';
+    cells[c].innerHTML = '—';
+    cells[c].style.cursor = '';
+    cells[c].contentEditable = 'false';
+    cells[c].onblur = null;
+  }
+  updateDatasheetBtn();
 }
 
 function updateDatasheetBtn() {
@@ -1932,17 +2516,17 @@ function exportResults() {
   // Add hyperlinks to Price Link and Datasheet Link columns
   const priceLinkCol = bomHeaders.length + 7;  // "Price Link" index in OUT_COLS
   const datasheetCol = bomHeaders.length + 8;  // "Datasheet Link" index in OUT_COLS
-  const headerRows = $('add-header-row').checked ? 2 : 1; // account for inserted header row
+  const headerRows = $('add-header-row').checked ? 2 : 1; // number of header rows in outRows
   bomData.forEach((row, i) => {
     const r = bomResults[i];
     if (!r || !r.found) return;
-    const excelRow = i + 1 + headerRows; // 1-indexed, skip header(s)
+    const cellRow = i + headerRows; // 0-based row index for encode_cell: skip header row(s)
     if (r.url) {
-      const addr = XLSX.utils.encode_cell({ r: excelRow, c: priceLinkCol });
+      const addr = XLSX.utils.encode_cell({ r: cellRow, c: priceLinkCol });
       if (ws[addr]) ws[addr].l = { Target: r.url, Tooltip: r.url };
     }
     if (r.datasheet_url) {
-      const addr = XLSX.utils.encode_cell({ r: excelRow, c: datasheetCol });
+      const addr = XLSX.utils.encode_cell({ r: cellRow, c: datasheetCol });
       if (ws[addr]) ws[addr].l = { Target: r.datasheet_url, Tooltip: r.datasheet_url };
     }
   });
@@ -2016,20 +2600,28 @@ async function saveDatasheets() {
   const downloadable = entries.filter(e => e.url);
   if (downloadable.length === 0) { showStatus('No datasheets available to download.', 'error'); return; }
 
-  let dirHandle;
-  try {
-    dirHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
-  } catch (e) {
-    if (e.name === 'AbortError') return;
-    showStatus('Directory picker not supported. Use Chrome.', 'error');
-    return;
+  // Detect Chrome File System Access API support
+  const useDirectoryPicker = typeof window.showDirectoryPicker === 'function';
+
+  let dirHandle = null;
+  if (useDirectoryPicker) {
+    try {
+      dirHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
+    } catch (e) {
+      if (e.name === 'AbortError') return;
+      // Fall through to ZIP if picker fails unexpectedly
+    }
   }
+  const useZip = !dirHandle;
+  const zip = useZip ? new JSZip() : null;
 
   const usedNames = {};
+  const failedEntries = [];   // { label, fileName, url }  — fetch failed
+  const missingEntries = [];  // { label }                 — no datasheet URL at all
   let downloaded = 0, failed = 0, skipped = 0;
   $('btn-datasheets').disabled = true;
   $('log-section').className = '';
-  log('\n━━━ Save Datasheets ━━━');
+  log('\n━━━ Save Datasheets' + (useZip ? ' (ZIP)' : '') + ' ━━━');
 
   // Reset progress bar
   $('progress-bar').className = 'progress-bar';
@@ -2041,24 +2633,28 @@ async function saveDatasheets() {
     const label = (entry.manufacturer ? entry.manufacturer + ' ' : '') + entry.partNumber;
     $('progress-fill').style.width = ((ei + 1) / entries.length * 100) + '%';
 
-    if (!entry.url) {
-      log(label + ' — datasheet not available');
-      skipped++;
-      continue;
-    }
-
+    // Build filename for ALL entries — needed for report even if no URL
     let ext = 'pdf';
-    try {
-      const urlPath = new URL(entry.url).pathname;
-      const match = urlPath.match(/\.([a-zA-Z0-9]{2,5})$/);
-      if (match) ext = match[1].toLowerCase();
-    } catch (e) {}
-
+    if (entry.url) {
+      try {
+        const urlPath = new URL(entry.url).pathname;
+        const match = urlPath.match(/\.([a-zA-Z0-9]{2,5})$/);
+        if (match) ext = match[1].toLowerCase();
+      } catch (e) {}
+    }
     const safeMfg = safeFileName(entry.manufacturer);
     const safePn = safeFileName(entry.partNumber);
     const safeDesc = safeFileName(entry.description);
     let baseName = safeMfg ? safeMfg + '_' + safePn : safePn;
     if (safeDesc) baseName += ' (' + safeDesc + ')';
+
+    if (!entry.url) {
+      const expectedName = baseName + '.pdf';
+      log(label + ' — datasheet not available');
+      missingEntries.push({ fileName: expectedName });
+      skipped++;
+      continue;
+    }
 
     let fileName = baseName + '.' + ext;
     if (usedNames[fileName.toLowerCase()]) {
@@ -2068,32 +2664,104 @@ async function saveDatasheets() {
     }
     usedNames[fileName.toLowerCase()] = true;
 
-    $('progress-text').textContent = 'Saving: ' + fileName;
-    showStatus('Saving: ' + fileName, 'info');
+    $('progress-text').textContent = (useZip ? 'Fetching: ' : 'Saving: ') + fileName;
+    showStatus((useZip ? 'Fetching: ' : 'Saving: ') + fileName, 'info');
 
     try {
       const response = await fetch(entry.url);
       if (!response.ok) throw new Error('HTTP ' + response.status);
       const blob = await response.blob();
-      const fileHandle = await dirHandle.getFileHandle(fileName, { create: true });
-      const writable = await fileHandle.createWritable();
-      await writable.write(blob);
-      await writable.close();
+
+      if (useZip) {
+        zip.file(fileName, blob);
+      } else {
+        const fileHandle = await dirHandle.getFileHandle(fileName, { create: true });
+        const writable = await fileHandle.createWritable();
+        await writable.write(blob);
+        await writable.close();
+      }
       downloaded++;
       log(fileName + '\n  ' + entry.url);
     } catch (e) {
       log(fileName + ' — FAILED: ' + e.message + '\n  ' + entry.url);
       failed++;
+      failedEntries.push({ label, fileName, url: entry.url });
+    }
+  }
+
+  // Build and save _failed_links_TIMESTAMP.html if any entries failed or are missing
+  const needsReport = failedEntries.length > 0 || missingEntries.length > 0;
+  const reportName = '_failed_links_' + (() => {
+    const d = new Date(), p = n => String(n).padStart(2, '0');
+    return d.getFullYear() + p(d.getMonth()+1) + p(d.getDate()) + '_' + p(d.getHours()) + p(d.getMinutes()) + p(d.getSeconds());
+  })() + '.html';
+
+  if (needsReport) {
+    const failedRows = failedEntries.map(f =>
+      '<tr><td style="padding:5px 10px;font-family:monospace;font-size:12px">' + escapeHtml(f.fileName) + '</td>' +
+      '<td style="padding:5px 10px"><a href="' + escapeHtml(f.url) + '" target="_blank" style="color:#185fa5">' + escapeHtml(f.url) + '</a></td>' +
+      '<td style="padding:5px 10px;color:#a32d2d">Download failed</td></tr>'
+    ).join('\n');
+    const missingRows = missingEntries.map(m =>
+      '<tr><td style="padding:5px 10px;font-family:monospace;font-size:12px">' + escapeHtml(m.fileName) + '</td>' +
+      '<td style="padding:5px 10px;color:#9a9990;font-style:italic">—</td>' +
+      '<td style="padding:5px 10px;color:#9a9990">Missing link</td></tr>'
+    ).join('\n');
+    const reportHtml =
+      '<!DOCTYPE html><html><head><meta charset="UTF-8">' +
+      '<title>Datasheet Report</title>' +
+      '<style>body{font-family:sans-serif;font-size:13px;padding:20px;color:#1a1a1a}' +
+      'h2{margin-bottom:6px}p{color:#6b6a66;margin-bottom:14px}' +
+      'table{border-collapse:collapse;width:100%}th,td{border:1px solid #d3d1c7;text-align:left}' +
+      'th{background:#f1efe8;padding:6px 10px}tr:hover{background:#faf9f5}</style></head><body>' +
+      '<h2>Datasheet Report</h2>' +
+      '<p>Generated: ' + new Date().toLocaleString() + ' &nbsp;|&nbsp; ' +
+      failedEntries.length + ' failed download(s), ' + missingEntries.length + ' missing link(s)</p>' +
+      '<table><thead><tr><th>Part</th><th>URL</th><th>Status</th></tr></thead><tbody>' +
+      failedRows + missingRows +
+      '</tbody></table></body></html>';
+
+    try {
+      if (useZip) {
+        zip.file(reportName, reportHtml);
+      } else {
+        const fh = await dirHandle.getFileHandle(reportName, { create: true });
+        const wr = await fh.createWritable();
+        await wr.write(reportHtml);
+        await wr.close();
+      }
+      log(reportName + ' saved (' + (failedEntries.length + missingEntries.length) + ' entries)');
+    } catch (e) {
+      log('Could not save ' + reportName + ': ' + e.message);
+    }
+  }
+
+  // Generate and trigger ZIP download
+  if (useZip && (downloaded > 0 || needsReport)) {
+    $('progress-text').textContent = 'Generating ZIP...';
+    showStatus('Generating ZIP...', 'info');
+    try {
+      const zipBlob = await zip.generateAsync({ type: 'blob', compression: 'STORE' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(zipBlob);
+      a.download = 'datasheets.zip';
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+    } catch (e) {
+      log('ZIP generation failed: ' + e.message);
+      failed += downloaded;
+      downloaded = 0;
     }
   }
 
   $('progress-fill').style.width = '100%';
   $('btn-datasheets').disabled = false;
-  let msg = 'Downloaded ' + downloaded + '/' + downloadable.length + ' datasheets.';
-  if (failed > 0) msg += ' (' + failed + ' failed)';
-  if (skipped > 0) msg += ' (' + skipped + ' without datasheet)';
+  let msg = (useZip ? 'Packaged ' : 'Downloaded ') + downloaded + '/' + downloadable.length + ' datasheets' + (useZip ? ' into ZIP.' : '.');
+  if (failed > 0) msg += ' ' + failed + ' failed.';
+  if (skipped > 0) msg += ' ' + skipped + ' missing datasheet link.';
+  if (needsReport) msg += ' See ' + reportName + '.';
   $('progress-text').textContent = msg;
-  showStatus(msg, failed > 0 ? 'info' : 'success');
+  showStatus(msg, failed > 0 && downloaded === 0 ? 'error' : failed > 0 || skipped > 0 ? 'info' : 'success');
   log('━━━ ' + msg + ' ━━━');
 }
 
