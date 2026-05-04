@@ -11,7 +11,6 @@ Runs entirely in the browser — no server backend required. Supports direct dis
 | File | Description |
 |------|-------------|
 | `bom-pricing-tool.html` | Main application — BOM batch processor |
-| `part-search-test.html` | Single-part search tool for testing and debugging |
 
 ## Search Methods
 
