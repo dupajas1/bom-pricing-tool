@@ -235,7 +235,13 @@
     Drop Excel (.xlsx) or CSV file here, or click to browse
     <input type="file" id="file-input" accept=".xlsx,.xls,.csv,.tsv" onchange="handleFile(this.files[0])">
   </div>
-  <div id="file-info" class="hidden" style="font-size:12px; color:#6b6a66;"></div>
+  <div style="display:flex; gap:16px; align-items:center; flex-wrap:wrap; margin-top:4px;">
+    <div id="file-info" class="hidden" style="font-size:12px; color:#6b6a66;"></div>
+    <label id="sheet-selector" class="hidden" style="font-size:12px; color:#6b6a66; display:flex; align-items:center; gap:6px;">
+      Sheet:
+      <select id="sheet-select" style="padding:3px 6px; font-size:12px; border:1px solid #d3d1c7; border-radius:4px;" onchange="parseSheet(this.value)"></select>
+    </label>
+  </div>
 </div>
 
 <!-- ═══ Column Mapping (shown after file load) ═══ -->
@@ -260,8 +266,12 @@
     </div>
   </div>
   <div style="margin-top:8px; display:flex; gap:20px; align-items:center; flex-wrap:wrap;">
+    <label style="font-size:12px; color:#6b6a66; display:flex; align-items:center; gap:6px;">
+      Header row:
+      <input type="number" id="start-row" value="1" min="1" max="999" style="width:52px; padding:3px 6px; font-size:12px; border:1px solid #d3d1c7; border-radius:4px;" onchange="if(bomAllRows.length) interpretRows()">
+    </label>
     <label style="font-size:12px; color:#6b6a66; cursor:pointer;">
-      <input type="checkbox" id="add-header-row"> Add column header row (use if BOM has no header row)
+      <input type="checkbox" id="add-header-row"> No header row (treat first row as data)
     </label>
     <label style="font-size:12px; color:#6b6a66;">
       Column ID prefix:
@@ -1717,8 +1727,9 @@ async function searchPartDdg(pn, mfg, qty) {
   const pnLower = pn.toLowerCase();
   const candidates = [];
   const seenDomains = new Set();
-  const distros = ['digikey','mouser','octopart','newark','farnell','arrow','lcsc','element14','rs-online','avnet','future','componentsearchengine','findchips','tme.eu'];
-  const prodPats = ['/products/detail','/productdetail','/product/','/part/','/pd/','/p/','/prices/'];
+  const distros   = ['digikey','mouser','octopart','newark','farnell','arrow','lcsc','element14','rs-online','avnet','future','componentsearchengine','findchips','tme.eu'];
+  const resellers  = ['ebay.','amazon.','aliexpress.','alibaba.','wish.com','etsy.','bonanza.','shopify.','made-in-china.','globalsources.','dhgate.','tradesparq.'];
+  const prodPats  = ['/products/detail','/productdetail','/product/','/part/','/pd/','/p/','/prices/'];
   for (const r of searchResults) {
     const u = r.url.toLowerCase(), t = r.title.toLowerCase(), s = r.snippet.toLowerCase(), c = t + ' ' + s + ' ' + u;
     if (u.includes('duckduckgo.com/y.js') || u.includes('youtube.com') || u.includes('wikipedia.org')) continue;
@@ -1727,6 +1738,7 @@ async function searchPartDdg(pn, mfg, qty) {
     if (distros.some(d => u.includes(d))) score += 2;
     if (prodPats.some(p => u.includes(p))) score += 2;
     if (/price|pricing|\$|stock|buy|order|availability/i.test(c)) score += 1;
+    if (resellers.some(d => u.includes(d))) score -= 4;  // demote marketplaces/resellers
     if (score < 3) continue;
     const domain = r.url.match(/\/\/([^/]+)/)?.[1] || '';
     if (seenDomains.has(domain)) continue;
@@ -1840,50 +1852,28 @@ dz.addEventListener('drop', e => { e.preventDefault(); dz.classList.remove('over
 let bomAllRows = [];     // all parsed rows (raw values)
 let bomFormatted = [];   // formatted cell strings (preserves "1.00" format)
 let bomDataFormatted = []; // formatted strings for data rows only (parallels bomData)
+let currentWorkbook = null; // parsed workbook (kept for sheet switching)
 
 function handleFile(file) {
   if (!file) return;
   originalFileName = file.name.replace(/\.(xlsx|xls|csv|tsv)$/i, '');
   $('file-info').textContent = file.name + ' (' + (file.size / 1024).toFixed(1) + ' KB)';
   $('file-info').className = '';
+  $('start-row').value = 1;  // reset start row for new file
 
   const reader = new FileReader();
   reader.onload = function(e) {
     try {
       const data = new Uint8Array(e.target.result);
-      const workbook = XLSX.read(data, { type: 'array', cellStyles: true });
-      const sheet = workbook.Sheets[workbook.SheetNames[0]];
+      currentWorkbook = XLSX.read(data, { type: 'array', cellStyles: true });
 
-      // Get raw values
-      const json = XLSX.utils.sheet_to_json(sheet, { header: 1 });
-      if (json.length < 1) { showStatus('File is empty', 'error'); return; }
+      // Populate sheet dropdown
+      const names = currentWorkbook.SheetNames;
+      const sel = $('sheet-select');
+      sel.innerHTML = names.map(n => '<option value="' + escapeHtml(n) + '">' + escapeHtml(n) + '</option>').join('');
+      $('sheet-selector').className = names.length > 1 ? '' : 'hidden';
 
-      // Build formatted strings for each cell (preserves "1.00" etc.)
-      const range = XLSX.utils.decode_range(sheet['!ref'] || 'A1');
-      bomFormatted = [];
-      for (let r = range.s.r; r <= range.e.r; r++) {
-        const fmtRow = [];
-        for (let c = range.s.c; c <= range.e.c; c++) {
-          const addr = XLSX.utils.encode_cell({ r, c });
-          const cell = sheet[addr];
-          fmtRow.push(cell ? XLSX.utils.format_cell(cell) : '');
-        }
-        bomFormatted.push(fmtRow);
-      }
-
-      // Filter empty rows from both raw and formatted arrays in sync
-      bomAllRows = [];
-      const fmtFiltered = [];
-      for (let i = 0; i < json.length; i++) {
-        const row = json[i];
-        if (row.some(cell => cell !== undefined && cell !== null && cell !== '')) {
-          bomAllRows.push(row);
-          fmtFiltered.push(bomFormatted[i] || []);
-        }
-      }
-      bomFormatted = fmtFiltered;
-      interpretRows();
-      $('mapping-section').className = 'section';
+      parseSheet(names[0]);
       clearStatus();
     } catch (err) {
       showStatus('Error reading file: ' + err.message, 'error');
@@ -1892,27 +1882,72 @@ function handleFile(file) {
   reader.readAsArrayBuffer(file);
 }
 
+function parseSheet(sheetName) {
+  if (!currentWorkbook) return;
+  const sheet = currentWorkbook.Sheets[sheetName];
+  if (!sheet) return;
+
+  // Get raw values
+  const json = XLSX.utils.sheet_to_json(sheet, { header: 1 });
+  if (json.length < 1) { showStatus('Sheet is empty', 'error'); return; }
+
+  // Build formatted strings for each cell (preserves "1.00" etc.)
+  const range = XLSX.utils.decode_range(sheet['!ref'] || 'A1');
+  bomFormatted = [];
+  for (let r = range.s.r; r <= range.e.r; r++) {
+    const fmtRow = [];
+    for (let c = range.s.c; c <= range.e.c; c++) {
+      const addr = XLSX.utils.encode_cell({ r, c });
+      const cell = sheet[addr];
+      fmtRow.push(cell ? XLSX.utils.format_cell(cell) : '');
+    }
+    bomFormatted.push(fmtRow);
+  }
+
+  // Filter empty rows from both raw and formatted arrays in sync
+  bomAllRows = [];
+  const fmtFiltered = [];
+  for (let i = 0; i < json.length; i++) {
+    const row = json[i];
+    if (row.some(cell => cell !== undefined && cell !== null && cell !== '')) {
+      bomAllRows.push(row);
+      fmtFiltered.push(bomFormatted[i] || []);
+    }
+  }
+  bomFormatted = fmtFiltered;
+  $('start-row').value = 1;  // reset start row when switching sheets
+  interpretRows();
+  $('mapping-section').className = 'section';
+}
+
 function interpretRows() {
   const noHeader = $('add-header-row').checked;
-  const maxCols = bomAllRows.reduce((m, r) => Math.max(m, r.length), 0);
+  const startRow = Math.max(1, parseInt($('start-row').value) || 1);
+  const startIdx = startRow - 1;
+
+  // Slice raw and formatted arrays to start from the specified header/data row
+  const activeRows = bomAllRows.slice(startIdx);
+  const activeFmt  = bomFormatted.slice(startIdx);
+
+  const maxCols = Math.max(16, activeRows.reduce((m, r) => Math.max(m, r.length), 0));
 
   if (noHeader) {
     // No header row — all rows are data, use first row values as column hints
     bomHeaders = [];
-    const firstRow = bomAllRows[0] || [];
+    const firstRow = activeRows[0] || [];
     for (let i = 0; i < maxCols; i++) {
       const val = String(firstRow[i] || '').trim();
       const label = 'Col ' + String.fromCharCode(65 + (i % 26)) + (i >= 26 ? String(Math.floor(i / 26)) : '');
       bomHeaders.push(val ? label + ': ' + val.substring(0, 30) : label);
     }
-    bomData = bomAllRows.slice();
-    bomDataFormatted = bomFormatted.slice();
+    bomData = activeRows.slice();
+    bomDataFormatted = activeFmt.slice();
   } else {
-    // Row 1 is headers
-    bomHeaders = bomAllRows[0].map(h => String(h || '').trim());
-    while (bomHeaders.length < maxCols) bomHeaders.push('Col ' + bomHeaders.length);
-    bomData = bomAllRows.slice(1);
-    bomDataFormatted = bomFormatted.slice(1);
+    // First active row is the header
+    bomHeaders = (activeRows[0] || []).map(h => String(h || '').trim());
+    while (bomHeaders.length < maxCols) bomHeaders.push('Col ' + String.fromCharCode(65 + bomHeaders.length));
+    bomData = activeRows.slice(1);
+    bomDataFormatted = activeFmt.slice(1);
   }
 
   bomResults = new Array(bomData.length).fill(null);
